@@ -24,7 +24,6 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync, realpathSync, chmod
 import { homedir } from 'os'
 import { join, basename } from 'path'
 import { randomBytes, timingSafeEqual, createHmac } from 'crypto'
-import { execFile } from 'child_process'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 import { addMessage, getMessages, markSeen, addReaction, markInboxRead } from './chat-db.js'
@@ -36,17 +35,10 @@ import { mountPermissions, sanitiseSuggestions, redactPermission } from './permi
 import { mountHealth, readVersion } from './health.js'
 import { readPort, readUiPort, readHost, loadOfficeConfig, bossFromConfig } from './config.js'
 import { agentTranscriptPath, readTranscript, isTranscriptPath, clampLine } from './transcript.js'
+import { notify } from './notify.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-const NOTIFY_SCRIPT = join(__dirname, '..', 'scripts', 'notify.sh')
-
-function sendNotification(title, msg) {
-  try {
-    const child = execFile('bash', [NOTIFY_SCRIPT, title, msg], { timeout: 3000 })
-    child.unref()
-  } catch {}
-}
 
 // The port and the Vite dev port come from AGENT_OFFICE_PORT /
 // AGENT_OFFICE_UI_PORT (server/config.js); the bind host is read in start().
@@ -2007,7 +1999,7 @@ app.post('/chat', (req, res) => {
 
   // Smart notification — ping when "claude" or "@claude" is mentioned
   if (/claude/i.test(text)) {
-    sendNotification('Office Chat', clampString(sender) + ': ' + text.slice(0, 50))
+    notify('Office Chat', clampString(sender) + ': ' + text.slice(0, 50))
   }
 
   // Write to webhook file so Claude can detect new messages
@@ -2905,7 +2897,7 @@ function processEvent(body) {
 
         // Smart notification — alert on failure
         if (/error|fail/i.test(body.result ?? '')) {
-          sendNotification('Agent Failed', agent.name + ' failed')
+          notify('Agent Failed', agent.name + ' failed')
         }
       }
       console.log(`[-] Agent completed: ${id ?? body.agentId}${stats.tokens !== undefined ? ` (${stats.tokens} tokens${stats.durationMs !== undefined ? `, ${stats.durationMs} ms` : ''})` : ''}`)

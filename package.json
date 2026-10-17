@@ -68,8 +68,7 @@
       "dist/**",
       "electron/**",
       "!electron/after-pack.cjs",
-      "server/**",
-      "scripts/notify.sh"
+      "server/**"
     ],
     "npmRebuild": false,
     "afterPack": "electron/after-pack.cjs",

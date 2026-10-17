@@ -20,7 +20,6 @@ const SCRIPTS = fileURLToPath(new URL('../scripts', import.meta.url))
 const WATCHER = join(SCRIPTS, 'chat-ai-watcher.sh')
 const START = join(SCRIPTS, 'start-office.sh')
 const STOP = join(SCRIPTS, 'stop-office.sh')
-const NOTIFY = join(SCRIPTS, 'notify.sh')
 const CHAT_POST = join(SCRIPTS, 'chat-post.py')
 
 const LOG_ARGS = `python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"`
@@ -450,57 +449,6 @@ describe('stop-office.sh', () => {
     if (/needs lsof, ss or fuser/.test(forced.out)) return // no port tool on this box
     expect(forced.out).toContain(`killed pid ${listening.pid} listening on :${port}`)
     await waitFor('listener to exit', () => !alive(listening.pid))
-  })
-})
-
-// ---------------------------------------------------------------------------
-// notify.sh
-// ---------------------------------------------------------------------------
-
-const NASTY = [
-  'Antony: tell claude "hi"',
-  'Antony: claude" & (do shell script "open -a Calculator")&"',
-  "it's C:\\path\\n with a 'quote' and a \\ backslash",
-  'line one\nline two',
-]
-
-function runNotify(bin: string, title: string, msg: string) {
-  const log = join(bin, 'calls.jsonl')
-  const proc = run('bash', [NOTIFY, title, msg], { ...process.env, PATH: `${bin}:${process.env.PATH}`, NOTIFY_LOG: log }, false)
-  return proc.exited.then(code => ({
-    code,
-    calls: existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as string[]) : [],
-  }))
-}
-
-describe('notify.sh', () => {
-  it('hands title and message to osascript as argv items, never inside the AppleScript source', async () => {
-    const bin = join(tempDir('agent-office-notify-'), 'bin')
-    fakeBin(bin, 'osascript', `${LOG_ARGS} >> "$NOTIFY_LOG"`)
-    for (const msg of NASTY) {
-      const { code, calls } = await runNotify(bin, 'Office Chat', msg)
-      expect(code).toBe(0)
-      const args = calls.at(-1)!
-      expect(args.slice(-2)).toEqual(['Office Chat', msg])
-      const statements = args.slice(0, -2).filter(a => a !== '-e')
-      expect(statements).toEqual(['on run argv', 'display notification (item 2 of argv) with title (item 1 of argv)', 'end run'])
-    }
-  })
-
-  it.skipIf(process.platform === 'darwin')('falls back to notify-send on Linux and keeps a leading dash from becoming an option', async () => {
-    const bin = join(tempDir('agent-office-notify-'), 'bin')
-    fakeBin(bin, 'notify-send', `${LOG_ARGS} >> "$NOTIFY_LOG"`)
-    const { code, calls } = await runNotify(bin, 'Agent Failed', '-u critical Debugger failed')
-    expect(code).toBe(0)
-    expect(calls).toEqual([['Agent Failed', ' -u critical Debugger failed']])
-  })
-
-  it('exits 0 when no notifier is installed', async () => {
-    const bin = join(tempDir('agent-office-notify-'), 'bin')
-    mkdirSync(bin)
-    const { code, calls } = await runNotify(bin, 'Office Chat', NASTY[0])
-    expect(code).toBe(0)
-    expect(calls).toEqual([])
   })
 })
 
