@@ -9,11 +9,23 @@
  * needs the token. Exits 1 when the server refuses the command.
  */
 
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { officeHome, officeUrl, readToken, send } from '../hooks/office-client.mjs'
 
+/**
+ * Git Bash (MSYS) rewrites a lone `/clear` argument into `C:/Program Files/Git/clear`
+ * before node sees it. Undo that: under MSYS, an argument that is an existing
+ * directory plus one missing name was a slash command.
+ */
+function unMsys(args) {
+  if (!process.env.MSYSTEM || args.length !== 1) return args
+  const m = /^[A-Za-z]:[\\/].*[\\/]([a-z][\w-]*)$/i.exec(args[0])
+  return m && !existsSync(args[0]) && existsSync(dirname(args[0])) ? [`/${m[1]}`] : args
+}
+
 async function main() {
-  let text = process.argv.slice(2).join(' ')
+  let text = unMsys(process.argv.slice(2)).join(' ')
   if (!text) {
     console.log('Usage: node chat-post.mjs <message>   (or a slash command: /clear, /incident, ...)')
     process.exitCode = 1

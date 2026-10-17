@@ -60,6 +60,20 @@ describe('chat-post.mjs', () => {
     }
   })
 
+  // The rewrite only exists where MSYS turns `/clear` into a drive path
+  it.skipIf(process.platform !== 'win32')('/clear typed in Git Bash (MSYS rewrote it to C:/…/clear) is still the command', async () => {
+    const { o, texts, env } = await office(true)
+    try {
+      await request(o.server.app).post('/chat').send({ sender: 'Antony', text: 'my secret prompt' })
+      const rewritten = `${tmpdir().replace(/\\/g, '/')}/clear`
+      const code = await new Promise(resolve => spawn(process.execPath, [script('chat-post.mjs'), rewritten], { env: { ...env, MSYSTEM: 'MINGW64' }, stdio: 'ignore' }).on('close', resolve))
+      expect(code).toBe(0)
+      expect(await texts()).toEqual(['/clear', '🧹 Chat cleared'])
+    } finally {
+      removeOffice(o)
+    }
+  })
+
   it('a refused command exits 1 with the server\'s reason and deletes nothing; a plain line still posts as Claude', async () => {
     let panelLine = ''
     const { o, run, texts } = await office(false)
