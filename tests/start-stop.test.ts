@@ -159,9 +159,10 @@ describe('stop-office.mjs', () => {
 
   it('takes down what the recorded process started too', async () => {
     const dir = tempDir('agent-office-stop-')
-    writeFileSync(join(dir, 'vite.js'), `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(IDLE)}, ${JSON.stringify(MARK)}], { stdio: 'ignore' }); console.log(c.pid); ${IDLE}
+    mkdirSync(join(dir, 'vite', 'bin'), { recursive: true })
+    writeFileSync(join(dir, 'vite', 'bin', 'vite.js'), `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(IDLE)}, ${JSON.stringify(MARK)}], { stdio: 'ignore' }); console.log(c.pid); ${IDLE}
 `)
-    const parent = run(NODE, [join(dir, 'vite.js'), MARK], process.env)
+    const parent = run(NODE, [join(dir, 'vite', 'bin', 'vite.js'), MARK], process.env)
     const childPid = await waitFor('the grandchild pid', () => Number(parent.out.trim()) || 0)
     expect(alive(childPid)).toBe(true)
     writeFileSync(join(dir, 'vite.pid'), `${parent.pid}\n`)

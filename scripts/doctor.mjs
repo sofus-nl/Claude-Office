@@ -410,7 +410,7 @@ export async function runDoctor(opts = {}) {
 
   const results = []
   results.push(checkNode(opts.nodeVersion))
-  const hooks = checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform, loginPath: opts.loginPath, path: opts.path })
+  const hooks = checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform, loginPath: opts.loginPath, path: opts.path ?? env.PATH ?? env.Path ?? process.env.PATH ?? '' })
   results.push(...hooks.results)
   results.push(checkStatusLine({ settings, statusScript, home, pluginOnly: hooks.plugin.found && !hooks.hooks.any }))
   const server = await checkServer({ port, fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs })

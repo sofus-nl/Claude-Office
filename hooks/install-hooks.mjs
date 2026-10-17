@@ -169,7 +169,8 @@ export function scriptPathIn(command, name) {
 export function which(name, path = process.env.PATH ?? '') {
   for (const dir of path.split(delimiter)) {
     if (!dir) continue
-    const candidate = join(dir, name)
+    // Windows PATH entries may be quoted ("C:\Program Files\nodejs")
+    const candidate = join(dir.replace(/^"|"$/g, ''), name)
     try {
       accessSync(candidate, constants.X_OK)
       if (statSync(candidate).isFile()) return candidate
@@ -576,7 +577,7 @@ export function main(argv, env = process.env) {
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   const trackerScript = forwardSlashes(join(scriptDir, 'agent-tracker.mjs'))
   const statusScript = forwardSlashes(join(scriptDir, 'status-line.mjs'))
-  const node = nodeCommand({ env })
+  const node = nodeCommand()
   const hookCommand = `${node} "${trackerScript}"`
   const officeHome = env.AGENT_OFFICE_HOME || join(homedir(), '.agent-office')
 
