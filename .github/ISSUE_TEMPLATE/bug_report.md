@@ -18,9 +18,9 @@ What you expected the office to show or do.
 
 **Environment**
 - Claude Code version (`claude --version`):
-- OS (macOS / Linux / Windows via WSL or Git Bash):
+- OS (macOS / Linux / Windows):
 - Node version (`node --version`):
-- How you run the office: `npm run build && npm run server` / `bash scripts/start-office.sh` / `npm run dev:all` / desktop app (`npm run pack` or `npm run build:electron`)
+- How you run the office: `npm run build && npm run server` / `node scripts/start-office.mjs` / `npm run dev:all` / desktop app (`npm run pack` or `npm run build:electron`)
 - Hooks installed with `npm run install-hooks`? (yes / no / edited by hand)
 
 **Logs or screenshots**

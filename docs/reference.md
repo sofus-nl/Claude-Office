@@ -23,7 +23,7 @@ Run the installer (registers the 19 hook events below plus the status line, safe
 npm run install-hooks
 ```
 
-It writes `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that is set (the file Claude Code reads then), and backs it up first (`settings.json.backup.<timestamp>`, with `.1`, `.2`, … added for further runs in the same second, so no backup is ever overwritten). A settings file that is not valid JSON is refused: the installer prints the parse error with its line and column, changes nothing and exits 1, so a stray comma never costs you the rest of your settings. If you move, rename or re-clone the checkout, re-run the installer: entries that still name the old `hooks/agent-tracker.sh` / `hooks/status-line.sh` path are repointed at the current one, so Claude Code stops reporting a hook error on every tool call. An entry counts as the office's only when a word of its command is a path ending in `hooks/agent-tracker.sh` (`hooks/status-line.sh`), so your own `my-status-line.sh` or `~/.claude/status-line.sh` is chained, never replaced. `bash hooks/install-hooks.sh --no-status-line` registers the hooks only (no meters); `npm run install-status-line` (`--status-line-only`) registers the status line only, for the [plugin install](#install-as-a-claude-code-plugin).
+It writes `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that is set (the file Claude Code reads then), and backs it up first (`settings.json.backup.<timestamp>`, with `.1`, `.2`, … added for further runs in the same second, so no backup is ever overwritten). A settings file that is not valid JSON is refused: the installer prints the parse error with its line and column, changes nothing and exits 1, so a stray comma never costs you the rest of your settings. If you move, rename or re-clone the checkout, re-run the installer: entries that still name the old `hooks/agent-tracker.sh` / `hooks/status-line.sh` path are repointed at the current one, so Claude Code stops reporting a hook error on every tool call. An entry counts as the office's only when a word of its command is a path ending in `hooks/agent-tracker.mjs` or the older `hooks/agent-tracker.sh` (`hooks/status-line.mjs` or `.sh`), so your own `my-status-line.sh` or `~/.claude/status-line.sh` is chained, never replaced. `node hooks/install-hooks.mjs --no-status-line` registers the hooks only (no meters); `npm run install-status-line` (`--status-line-only`) registers the status line only, for the [plugin install](#install-as-a-claude-code-plugin).
 
 Or add the hooks to `~/.claude/settings.json` yourself:
 
@@ -32,102 +32,102 @@ Or add the hooks to `~/.claude/settings.json` yourself:
   "hooks": {
     "PreToolUse": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PostToolUse": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PostToolUseFailure": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "SubagentStart": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "SubagentStop": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "SessionEnd": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PermissionRequest": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "Notification": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "StopFailure": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PreCompact": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PostCompact": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PostToolBatch": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "CwdChanged": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "PostModelSwitch": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "TaskCreated": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ],
     "TaskCompleted": [
       {
-        "hooks": [{ "type": "command", "command": "bash /path/to/Claude-Office/hooks/agent-tracker.sh" }]
+        "hooks": [{ "type": "command", "command": "node /path/to/Claude-Office/hooks/agent-tracker.mjs" }]
       }
     ]
   },
-  "statusLine": { "type": "command", "command": "bash /path/to/Claude-Office/hooks/status-line.sh", "padding": 0 },
-  "subagentStatusLine": { "type": "command", "command": "bash /path/to/Claude-Office/hooks/status-line.sh --subagents" }
+  "statusLine": { "type": "command", "command": "node /path/to/Claude-Office/hooks/status-line.mjs", "padding": 0 },
+  "subagentStatusLine": { "type": "command", "command": "node /path/to/Claude-Office/hooks/status-line.mjs --subagents" }
 }
 ```
 
@@ -137,19 +137,19 @@ Now spawn agents in Claude Code and watch them appear in the office.
 
 **Sessions.** Every hook payload names the Claude Code session it fired in (`session_id`, `cwd`, `transcript_path`), and the tracker forwards that on every event, so the office knows which terminal each agent works for. `SessionStart` adds a pill to the title bar (`SessionEnd` removes it and walks that session's agents out); a session the server first hears of mid-way — hooks installed while Claude was already running, or a server restart — is picked up from its next event. Sessions that go quiet for `AGENT_OFFICE_STALE_MINUTES` end the same way.
 
-**Sessions without hooks.** Claude Code keeps a registry of its running processes in `~/.claude/sessions/<pid>.json` (`$CLAUDE_CONFIG_DIR/sessions` if you moved it) — one file per CLI process, with the session id, the working directory, a display name (`office-7f`, or what `--name` / `/rename` set) and a status (`busy`, `shell`, `idle`, `waiting`). The server watches that directory (`server/sessions.js`: `fs.watch` plus a 2 s poll; a dead pid counts as gone, and so does a pid some other process holds now — a crash leaves the file behind, and after a reboot or a pid wrap its pid may name anything — told apart the way Claude Code does it, by the process start time the file recorded: `/proc/<pid>/stat` on Linux, `ps -o lstart=` on macOS, the pid alone elsewhere), so **every running session shows up in the title bar within two seconds, hooks or no hooks**. A session only the registry knows is a grey, dashed pill labelled with its registry name and tagged *not hooked*; its dot follows the registry status (`waiting` — a permission dialog or a question on its screen — is amber) and its tooltip says how to hook it. No Claude is seated for it and nothing else is shown: what a session is *doing* stays hook-only by design (nothing tails transcripts). The moment the hooks report from that terminal the pill turns into a normal one, same session id, and Claude walks in. `GET /sessions` carries `hooked` (true/false) and `registry` (`pid`, `name`, `status`, `kind`, `version`, `startedAt`, `statusUpdatedAt`) per session — a hooked session with a running process has `registry` too, as presence only, and is never swept as stale while that process lives; `GET /registry` shows the directory as the server reads it. The office's own chat bot runs `claude -p --name agent-office-bot` and is skipped by that name. *"I started Claude Code but nothing appears"*: look for the grey pill — if it is there, the session is running and only the hooks are missing (`npm run install-hooks`, or `/plugin install agent-office`); if even that is missing, `GET /registry` shows which directory the server reads and what it found there (`sessions` on `GET /health` and in `npm run doctor` counts these registry-only sessions too, so "2 sessions, 0 hooks seen" means exactly that).
+**Sessions without hooks.** Claude Code keeps a registry of its running processes in `~/.claude/sessions/<pid>.json` (`$CLAUDE_CONFIG_DIR/sessions` if you moved it) — one file per CLI process, with the session id, the working directory, a display name (`office-7f`, or what `--name` / `/rename` set) and a status (`busy`, `shell`, `idle`, `waiting`). The server watches that directory (`server/sessions.js`: `fs.watch` plus a 2 s poll; a dead pid counts as gone, and so does a pid some other process holds now — a crash leaves the file behind, and after a reboot or a pid wrap its pid may name anything — told apart the way Claude Code does it, by the process start time the file recorded: `/proc/<pid>/stat` on Linux, `ps -o lstart=` on macOS, the pid alone elsewhere (Windows included)), so **every running session shows up in the title bar within two seconds, hooks or no hooks**. A session only the registry knows is a grey, dashed pill labelled with its registry name and tagged *not hooked*; its dot follows the registry status (`waiting` — a permission dialog or a question on its screen — is amber) and its tooltip says how to hook it. No Claude is seated for it and nothing else is shown: what a session is *doing* stays hook-only by design (nothing tails transcripts). The moment the hooks report from that terminal the pill turns into a normal one, same session id, and Claude walks in. `GET /sessions` carries `hooked` (true/false) and `registry` (`pid`, `name`, `status`, `kind`, `version`, `startedAt`, `statusUpdatedAt`) per session — a hooked session with a running process has `registry` too, as presence only, and is never swept as stale while that process lives; `GET /registry` shows the directory as the server reads it. The office's own chat bot runs `claude -p --name agent-office-bot` and is skipped by that name. *"I started Claude Code but nothing appears"*: look for the grey pill — if it is there, the session is running and only the hooks are missing (`npm run install-hooks`, or `/plugin install agent-office`); if even that is missing, `GET /registry` shows which directory the server reads and what it found there (`sessions` on `GET /health` and in `npm run doctor` counts these registry-only sessions too, so "2 sessions, 0 hooks seen" means exactly that).
 
 **Claude's turn and needs-you.** The other ten events describe the session's own Claude, kept as `main` on each session (`GET /sessions`, the WebSocket snapshot, every `session_*` broadcast): `UserPromptSubmit` is the boss's prompt (`session_prompt` — or, when a background worker reports back, a wake-up that names the worker and carries only its summary line), every main-thread tool call is Claude *working*, `Stop` is the reply (`session_turn_end`: *waiting* when background tasks are still running, else *idle*), `PermissionRequest` and `Notification` (`permission_prompt`, `idle_prompt`, `quota_auto_resume_*`, `agent_needs_input`) make the session *needs-you* with what it waits on, `StopFailure` is an API *error* (rate limit, overloaded, ...), `PreCompact`/`PostCompact` show *compacting*, `CwdChanged` moves the project tag after a `cd`, and `PostModelSwitch` updates the model. A permission wait is shown only once it has lasted 300 ms (a headless `-p` session auto-denies and moves on faster than that), the completion of the call that asked (matched by a hash of its input, so a `git status` finishing beside the `git push` that asked does not count) or the end of that thread's batch (`PostToolBatch`) lowers the hand — for a dialog a subagent raised, the subagent's own next step or its finish does too — and so does Claude Code's session registry leaving *waiting* (the dialog was answered or dismissed in the terminal, an Esc included); a hand nobody answers comes down after ten minutes, restart or not. The hook prints nothing on `UserPromptSubmit` and always exits 0, so nothing is injected into Claude's context and no prompt is ever blocked; the compaction summary and a worker's result are never forwarded. What the office keeps of the conversation is a setting — see `logPrompts` under [Security](#security).
 
 In the office that record is one Claude per terminal (`main-<session id>`, created by the session's first event or the snapshot, seated by the boss when that desk is free): the boss gets up and hands each prompt over at its desk, it types through the turn with its tool calls as its status line, its reply is a chat row (prompt and reply rows are tagged, under the boss and that session's Claude — never fetched from `GET /chat`), it dozes off 30 s after an idle turn end, holds a glass of water while background workers are still out, sweeps its desk during a compaction, wears a red ⚠ badge after an API error, and raises a hand while it waits on you — a chime, an amber *needs you* pill and a ✋ in front of the window title, all of which go when the server's record moves on (the granted tool, the batch end, the ten-minute timeout, your next prompt). An idle prompt and a quota pause are soft: no chime, no title prefix. Hand-overs, visits and timers are reducer effects (`src/officeReducer.ts`), so every one of these is unit-tested with synthetic events.
 
-**Answer permissions from the office.** What a `PermissionRequest` hook prints decides the dialog, so the office can answer it for you. While a session waits on "Do you want to run this command?" a card appears beside the chat column — *Claude wants to run Bash* / *write probe.txt*, the project and session, the command or path in a monospace box, a thin bar for the time left — with **Allow** (dialog option 1), **Allow & remember** (option 2: the dialog's own suggestion, say *switch this session to accept-edits*, shown in the tooltip; only offered when the dialog made one) and **Deny** (option 3, which tells Claude "Denied from Claude Office" and lets it carry on); with one card up, `y` and `n` work too. The tracker POSTs that one event in the foreground and long-polls `GET /permission/<id>` until the server has an answer, then prints the exact hook output; every other event is still a backgrounded curl. The terminal always wins: Claude Code never cancels the hook when you answer the dialog yourself, so any later activity of the session — the tool running, the batch ending, your next prompt, a new permission request, the session ending — releases the wait and the card fades with *answered in the terminal*. A headless `claude -p` session fires no `Notification` and auto-denies the call the moment the hook returns, so a pending permission expires after **15 s** unless the session is known to be interactive — a `Notification` (`permission_prompt` fires about 6 s in, whenever you are not looking at the terminal) has been seen for it, now or earlier — in which case it may wait **10 minutes**, inside the hook's default 600 s timeout; the card's bar stretches when that happens. The whole thing is a setting, `answerPermissions` (default on, `GET`/`POST /settings`, the **Answer here** toggle in the chat header): the server mirrors it as the marker file `~/.agent-office/answer-permissions`, which the hook checks before deciding to wait, so turning it off costs no round trip and leaves the hook exactly as it was. The hook never answers when the server is down or says nothing, nothing is ever auto-allowed, and who may click is covered under [Security](#security).
+**Answer permissions from the office.** What a `PermissionRequest` hook prints decides the dialog, so the office can answer it for you. While a session waits on "Do you want to run this command?" a card appears beside the chat column — *Claude wants to run Bash* / *write probe.txt*, the project and session, the command or path in a monospace box, a thin bar for the time left — with **Allow** (dialog option 1), **Allow & remember** (option 2: the dialog's own suggestion, say *switch this session to accept-edits*, shown in the tooltip; only offered when the dialog made one) and **Deny** (option 3, which tells Claude "Denied from Claude Office" and lets it carry on); with one card up, `y` and `n` work too. The tracker POSTs that one event in the foreground and long-polls `GET /permission/<id>` until the server has an answer, then prints the exact hook output; every other event is still posted in the background. The terminal always wins: Claude Code never cancels the hook when you answer the dialog yourself, so any later activity of the session — the tool running, the batch ending, your next prompt, a new permission request, the session ending — releases the wait and the card fades with *answered in the terminal*. A headless `claude -p` session fires no `Notification` and auto-denies the call the moment the hook returns, so a pending permission expires after **15 s** unless the session is known to be interactive — a `Notification` (`permission_prompt` fires about 6 s in, whenever you are not looking at the terminal) has been seen for it, now or earlier — in which case it may wait **10 minutes**, inside the hook's default 600 s timeout; the card's bar stretches when that happens. The whole thing is a setting, `answerPermissions` (default on, `GET`/`POST /settings`, the **Answer here** toggle in the chat header): the server mirrors it as the marker file `~/.agent-office/answer-permissions`, which the hook checks before deciding to wait, so turning it off costs no round trip and leaves the hook exactly as it was. The hook never answers when the server is down or says nothing, nothing is ever auto-allowed, and who may click is covered under [Security](#security).
 
-**Signals.** The office also reads what your Bash commands *mean*. The tracker classifies each command (`classify_command` in `hooks/agent-tracker.sh`, after stripping `cd x &&`, env assignments, `sudo`, `npx`, `timeout` and friends, and splitting on `&&`, `||`, `;`, `|`): a **deploy** (`vercel deploy` / `--prod`, `netlify deploy`, `fly deploy`, `railway up`, `gcloud run|app deploy`, `aws … deploy`, `sam`/`serverless deploy`, `kubectl apply|rollout`, `helm upgrade|install`, `terraform apply`, `pulumi up`, `cdk deploy`, `wrangler deploy`, `firebase deploy`, `npm publish`, `gh release create`, `docker push`, a tag push), a **build** (`npm run build*`, `pnpm`/`yarn build`, `vite build`, `tsc`, `next build`, `cargo`/`go build`, `make`, `gradle`, `mvn package`, `docker build`, `webpack`, `esbuild`), a **test run** (`npm test`, `vitest`, `jest`, `pytest`, `cargo`/`go test`, `mvn`/`gradle test`, `rspec`, `phpunit`, `playwright test`) or a **push** (`git push`, to `main`/`master` or not). Its start (PreToolUse), success (PostToolUse) or failure (PostToolUseFailure, with the first meaningful error line, the exit code and a count such as *3 failing*) travels as `signals` on the event that call sends anyway, and the server broadcasts one `signal` per signal right after it, keeps the last 100 in memory (`GET /signals?since=<ms>&sessionId=<id>`, the last 20 in the WebSocket snapshot) and persists nothing. In the office a deploy in flight puts a rocket over the Claude (or worker) that ran it, a deploy that lands gets a cheer and *🚀 api deployed*, a failed deploy opens incident mode at once, a failed build or test run flashes that character red with *❌ tests failed in api — 3 failing*, the next green run posts *✅ tests green again*, and a push to main gets a small celebration; those chat lines are system rows the chat bot never answers. A segment whose exit status the shell hides (`npm test | tail`, `|| true`) is judged by its output instead, `--dry-run` never counts, and a command that names none of the table's programs never even loads the classifier, so ordinary Bash calls cost nothing extra. To teach it a tool, add a row to `SIGNAL_RULES` (programs, the subcommand words that make it count, its kind, the flags that take a value, where the target is) and the program's name to `SIGNAL_PROGRAMS` or `SIGNAL_NO_VERB` beside it, then a line to the table in `tests/hook-script.test.ts`.
+**Signals.** The office also reads what your Bash commands *mean*. The tracker classifies each command (`classifyCommand` in `hooks/agent-tracker.mjs`, after stripping `cd x &&`, env assignments, `sudo`, `npx`, `timeout` and friends, and splitting on `&&`, `||`, `;`, `|`): a **deploy** (`vercel deploy` / `--prod`, `netlify deploy`, `fly deploy`, `railway up`, `gcloud run|app deploy`, `aws … deploy`, `sam`/`serverless deploy`, `kubectl apply|rollout`, `helm upgrade|install`, `terraform apply`, `pulumi up`, `cdk deploy`, `wrangler deploy`, `firebase deploy`, `npm publish`, `gh release create`, `docker push`, a tag push), a **build** (`npm run build*`, `pnpm`/`yarn build`, `vite build`, `tsc`, `next build`, `cargo`/`go build`, `make`, `gradle`, `mvn package`, `docker build`, `webpack`, `esbuild`), a **test run** (`npm test`, `vitest`, `jest`, `pytest`, `cargo`/`go test`, `mvn`/`gradle test`, `rspec`, `phpunit`, `playwright test`) or a **push** (`git push`, to `main`/`master` or not). Its start (PreToolUse), success (PostToolUse) or failure (PostToolUseFailure, with the first meaningful error line, the exit code and a count such as *3 failing*) travels as `signals` on the event that call sends anyway, and the server broadcasts one `signal` per signal right after it, keeps the last 100 in memory (`GET /signals?since=<ms>&sessionId=<id>`, the last 20 in the WebSocket snapshot) and persists nothing. In the office a deploy in flight puts a rocket over the Claude (or worker) that ran it, a deploy that lands gets a cheer and *🚀 api deployed*, a failed deploy opens incident mode at once, a failed build or test run flashes that character red with *❌ tests failed in api — 3 failing*, the next green run posts *✅ tests green again*, and a push to main gets a small celebration; those chat lines are system rows the chat bot never answers. A segment whose exit status the shell hides (`npm test | tail`, `|| true`) is judged by its output instead, `--dry-run` never counts, and a command that names none of the table's programs never even loads the classifier, so ordinary Bash calls cost nothing extra. To teach it a tool, add a row to `SIGNAL_RULES` (programs, the subcommand words that make it count, its kind, the flags that take a value, where the target is) and the program's name to `SIGNAL_PROGRAMS` or `SIGNAL_NO_VERB` beside it, then a line to the table in `tests/hook-script.test.ts`.
 
 **Task board.** The kanban whiteboard on the wall shows the real task list of a session — the one Claude Code keeps with its `TaskCreate` / `TaskUpdate` tools, which the terminal draws as a checklist. Claude Code writes that list to `~/.claude/tasks/<session id>/<n>.json` (`$CLAUDE_CONFIG_DIR/tasks` if you moved it; one file per task with its subject, description, the spinner's *activeForm*, the status and what it is blocked by), and the server reads it from there (`server/tasks.js`): it watches the directory of every session the office knows (`fs.watch` plus a 2 s poll, from the session's first event until it ends), reads it once the writes settle (250 ms) and sends the page a `task_board` only when something changed. `TaskCreated` and `TaskCompleted` (the hook forwards the task id and subject) only make it look at once — nothing fires when a task goes *in progress*, so the files are the truth. On the board, To do post-its are yellow, In progress blue, Done green, one waiting on an unfinished task wears a red pin, and past six a column ends in *+N*; a post-it flashes when Claude picks it up and slides into Done when it is finished, and hovering one shows its subject (the *activeForm* while in progress). The board follows the session whose tasks changed last, with its name in the corner; when several sessions have task lists, click the board to page through them. Clicking it also sends the boss over to read it out — *3 to do, 1 in progress: Fix the parser*. A session without tasks leaves the wall's decorative board exactly as it was. `GET /tasks?sessionId=<id>` lists the boards (the descriptions only with the token, see [Security](#security)). Agent teams (`~/.claude/teams`, a team's shared task list) are not shown yet.
 
-**Uninstall.** `npm run uninstall-hooks` (or `bash hooks/install-hooks.sh --uninstall`) takes the office back out of `~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json` when that is set): it backs the file up (`settings.json.backup.<timestamp>`), removes every hook entry whose command runs `hooks/agent-tracker.sh` — under all 19 events, whatever checkout the path points at, duplicates included — and puts `statusLine` / `subagentStatusLine` back: a status line the installer chained is restored from `~/.agent-office/statusline-prev` (and `subagent-statusline-prev`), which are then deleted; one the installer added is removed. Hooks and settings that are not the office's are not touched, a file with nothing of ours in it is left as it is (exit 0), and one that is not valid JSON is refused with the parse error (exit 1, nothing changed). `--uninstall --no-status-line` removes the hooks only, `--uninstall --status-line-only` the status line only. The plugin install is removed with `/plugin uninstall agent-office` (see below).
+**Uninstall.** `npm run uninstall-hooks` (or `node hooks/install-hooks.mjs --uninstall`) takes the office back out of `~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json` when that is set): it backs the file up (`settings.json.backup.<timestamp>`), removes every hook entry whose command runs `hooks/agent-tracker.mjs` (or the older `.sh`) — under all 19 events, whatever checkout the path points at, duplicates included — and puts `statusLine` / `subagentStatusLine` back: a status line the installer chained is restored from `~/.agent-office/statusline-prev` (and `subagent-statusline-prev`), which are then deleted; one the installer added is removed. Hooks and settings that are not the office's are not touched, a file with nothing of ours in it is left as it is (exit 0), and one that is not valid JSON is refused with the parse error (exit 1, nothing changed). `--uninstall --no-status-line` removes the hooks only, `--uninstall --status-line-only` the status line only. The plugin install is removed with `/plugin uninstall agent-office` (see below).
 
 ### Install as a Claude Code plugin
 
@@ -166,7 +166,7 @@ claude plugin marketplace add W17ant/Claude-Office
 claude plugin install agent-office@agent-office
 ```
 
-`hooks/hooks.json` registers `hooks/agent-tracker.sh` from the installed copy (`${CLAUDE_PLUGIN_ROOT}`) for the same 19 events as the installer, with no matchers (the tracker acts on every tool call, and exits silently on anything it does not act on). `/agent-office:office` checks `http://127.0.0.1:3334/health` and prints how to start the server, which still runs from a clone or from the installed plugin directory (`npm install && npm run build && npm run server`). To remove it: `claude plugin uninstall agent-office@agent-office` (and `claude plugin marketplace remove agent-office` to drop the marketplace too).
+`hooks/hooks.json` registers `hooks/agent-tracker.mjs`, run with `node`, from the installed copy (`${CLAUDE_PLUGIN_ROOT}`) for the same 19 events as the installer, with no matchers (the tracker acts on every tool call, and exits silently on anything it does not act on). `/agent-office:office` checks `http://127.0.0.1:3334/health` and prints how to start the server, which still runs from a clone or from the installed plugin directory (`npm install && npm run build && npm run server`). To remove it: `claude plugin uninstall agent-office@agent-office` (and `claude plugin marketplace remove agent-office` to drop the marketplace too).
 
 Two things to know. Plugin hooks merge with the ones in your settings, so pick one path: if you ran `npm run install-hooks` earlier, take its hooks out with `npm run uninstall-hooks -- --no-status-line` (the status line stays), or every agent arrives twice; `npm run doctor` warns when both are active, and so does the installer. And a plugin can set [`subagentStatusLine` but not `statusLine`](https://code.claude.com/docs/en/plugins/components#default-settings): the MEMORY meter works without the status line (estimated from the session transcript, marked *est.*); payroll and electricity need it, and `npm run install-status-line`, run from the clone or the installed plugin directory, registers the status line and nothing else. Not `npm run install-hooks`: that registers every hook a second time, next to the plugin's. `claude plugin validate . --strict` runs in CI, and plugins do not load in cloud sessions.
 
@@ -176,7 +176,7 @@ Two things to know. Plugin hooks merge with the ones in your settings, so pick o
 
 - **The status strip** along the bottom of the office (hidden under `?sim` / `?video`, which get a `SIM` badge instead) shows `ONLINE` / `RECONNECTING…` / `OFFLINE` for the WebSocket to the office server (the page's own origin when the server serves it, `127.0.0.1:$AGENT_OFFICE_PORT` under Vite), then `hooks: last seen 12 s ago` once a hook event has reached the server — or, after a minute online with nothing heard (and the server up that long), `no hook events yet — run npm run install-hooks` — then the sessions, as in `3 sessions · 1 not hooked · 2 need you` (a session Claude Code runs without the hooks reporting it, and one waiting on a permission dialog or a question; each part is left out at zero), and the server version. Hover it for the details and the command to type, including which sessions are not hooked and what each waiting one waits on; while the server is down the strip says so and shows `npm run server`. A page without the office token (opened from a bare address rather than the link) says *read-only: open the link from `npm run open`* in amber — see [Security](#security).
 - **The session strip** in the title bar lists every running Claude Code process within two seconds, hooks or no hooks, straight from Claude Code's own registry (`~/.claude/sessions`, see **Sessions without hooks** above). A grey, dashed *not hooked* pill means the session is running and only the hooks are missing; no pill at all means Claude Code is not running (or writes its registry somewhere else — `GET /registry` shows the directory the server reads).
-- **`npm run doctor`** prints a `PASS` / `WARN` / `FAIL` line per link in the chain: the Node version; the hook entries in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`) running an `agent-tracker.sh` that exists — the installer's own rule — or the `agent-office` plugin being installed; the status line; `python3` / `bash` / `curl` on the PATH; the server answering `GET /health` on `AGENT_OFFICE_PORT` and whether hooks have reached it since it started; the auth token (present, mode `0600`); `dist/` built. It ends with the install, uninstall and start commands and exits 1 on any `FAIL`, so it works in a script too (`--json` for machine-readable output).
+- **`npm run doctor`** prints a `PASS` / `WARN` / `FAIL` line per link in the chain: the Node version; the hook entries in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`) running an `agent-tracker.mjs` (or an older `agent-tracker.sh`) that exists — the installer's own rule — or the `agent-office` plugin being installed; the status line; the server answering `GET /health` on `AGENT_OFFICE_PORT` and whether hooks have reached it since it started; the auth token (present, mode `0600`); `dist/` built. It ends with the install, uninstall and start commands and exits 1 on any `FAIL`, so it works in a script too (`--json` for machine-readable output).
 
 `GET /health` returns `{ status, agents, clients, sessions, lastHookAt, hooksSeen, uiAvailable, version, uptimeMs }`; the server also sends it in the WebSocket snapshot and as a `health` event, at most one every 5 s while hooks arrive.
 
@@ -184,17 +184,17 @@ Two things to know. Plugin hooks merge with the ones in your settings, so pick o
 
 | Platform | Office in the browser | Claude Code hooks + status line | Desktop app (Electron) |
 |---|---|---|---|
-| **macOS** | Yes — `start-office.sh` opens the browser with `open`; notifications via `osascript` | Yes — the hooks are bash scripts that call `python3` and `curl`; macOS ships `bash` and `curl`, `python3` comes with the Xcode command-line tools | Unsigned `.dmg` for Apple silicon and Intel on the [releases page](https://github.com/W17ant/Claude-Office/releases), built by the release workflow (first launch: see [Download](#desktop-app-electron)); not launched by hand this week |
-| **Linux** | Yes (verified) — `xdg-open` opens the browser; notifications via `notify-send` when present | Yes | Yes — `.AppImage` on the releases page; the self-contained bundle was built, launched and screenshotted on Linux this week |
-| **Windows** | Node runs the server natively: `npm run build && npm run server`, then open `http://127.0.0.1:3334` yourself | Through **WSL** or **Git Bash**, with `python3` and `curl` on the PATH: the installer and the hooks are bash scripts. A native Node hook is on the [roadmap](#roadmap) | NSIS `.exe` installer on the releases page, built by the release workflow; not launched by hand yet |
+| **macOS** | Yes — `start-office.mjs` opens the browser with `open`; notifications via `osascript` | Yes — Node; no bash, python3 or curl needed | Unsigned `.dmg` for Apple silicon and Intel on the [releases page](https://github.com/W17ant/Claude-Office/releases), built by the release workflow (first launch: see [Download](#desktop-app-electron)); not launched by hand this week |
+| **Linux** | Yes (verified) — `xdg-open` opens the browser; notifications via `notify-send` when present | Yes — Node; no bash, python3 or curl needed | Yes — `.AppImage` on the releases page; the self-contained bundle was built, launched and screenshotted on Linux this week |
+| **Windows** | Yes — `start-office.mjs` opens the browser with `explorer.exe`; notifications as Windows toasts | Yes — Node; no bash, python3 or curl needed | NSIS `.exe` installer on the releases page, built by the release workflow; not launched by hand yet |
 
-Requirements everywhere: Node 22 (what CI runs; `better-sqlite3` is a native module), `bash`, `python3` and `curl` for the hooks and the installer, and the Claude Code CLI (`claude`) for the chat AI watcher.
+Requirements everywhere: Node 22 (what CI runs; `better-sqlite3` is a native module) and the Claude Code CLI (`claude`) for the chat AI watcher. Nothing else: the hooks, the installer, the start/stop scripts and the chat helpers run on Node alone.
 
 ## The start/stop scripts
 
-`start-office.sh` starts the server, Vite and the chat AI watcher, each in its own process group, and records their pids in `~/.agent-office/server.pid`, `vite.pid` and `chat-watcher.pid`. `stop-office.sh` stops exactly those processes — a browser holding a WebSocket to `:3334`, the Electron app or an unrelated Vite on `:3333` are never touched. If you started the server some other way, `bash scripts/stop-office.sh --force` additionally kills whatever is *listening* on the office ports. Ctrl+C in `start-office.sh` stops everything it started; on a box without `open`/`xdg-open` it prints the URL instead of aborting.
+`node scripts/start-office.mjs` starts the server, Vite and the chat AI watcher, each in its own process group (on Windows, each as a process tree), and records their pids in `~/.agent-office/server.pid`, `vite.pid` and `chat-watcher.pid`. `node scripts/stop-office.mjs` stops exactly those processes (on Windows, each tree is stopped with `taskkill`) — a browser holding a WebSocket to `:3334`, the Electron app or an unrelated Vite on `:3333` are never touched. If you started the server some other way, `node scripts/stop-office.mjs --force` additionally kills whatever is *listening* on the office ports. Ctrl+C in `start-office.mjs` stops everything it started; on a box without `open`/`xdg-open` it prints the URL instead of aborting.
 
-The chat AI watcher (`scripts/chat-ai-watcher.sh`, log in `~/.agent-office/chat-ai.log`) only answers messages a person typed in the office chat — its own replies, the agents' `starting:`/`done:` announcements, agent-to-agent messages and `/commands` are never answered — and runs `claude -p` with `--max-turns 1 --model claude-haiku-5-5 --safe-mode --strict-mcp-config --tools "" --no-session-persistence` under a timeout, so a reply never fires the office's own hooks or loads your project's MCP servers. Knobs (all optional): `CHAT_AI_MODEL`, `CHAT_AI_TIMEOUT` (seconds, default 60), `CHAT_AI_MAX_REPLIES_PER_MIN` (default 5), `CHAT_AI_POLL_INTERVAL` (default 8). Every script honours `AGENT_OFFICE_HOME` (state dir) and `AGENT_OFFICE_PORT` (default 3334); `start-office.sh`/`stop-office.sh` also take `AGENT_OFFICE_UI_PORT` (default 3333). The server, the hook, the status line, the page and the desktop app read the same `AGENT_OFFICE_PORT`, so one export moves the whole office — see [Configuration](#configuration).
+The chat AI watcher (`scripts/chat-ai-watcher.mjs`, log in `~/.agent-office/chat-ai.log`) only answers messages a person typed in the office chat — its own replies, the agents' `starting:`/`done:` announcements, agent-to-agent messages and `/commands` are never answered — and runs `claude -p` with `--max-turns 1 --model claude-haiku-5-5 --safe-mode --strict-mcp-config --tools "" --no-session-persistence` under a timeout, so a reply never fires the office's own hooks or loads your project's MCP servers. Knobs (all optional): `CHAT_AI_MODEL`, `CHAT_AI_TIMEOUT` (seconds, default 60), `CHAT_AI_MAX_REPLIES_PER_MIN` (default 5), `CHAT_AI_POLL_INTERVAL` (default 8), `CHAT_AI_CLAUDE` (path to the `claude` binary; a `.mjs` or `.js` runs under `node`; the prompt goes to `claude -p` on stdin). Every script honours `AGENT_OFFICE_HOME` (state dir) and `AGENT_OFFICE_PORT` (default 3334); `start-office.mjs`/`stop-office.mjs` also take `AGENT_OFFICE_UI_PORT` (default 3333). The server, the hook, the status line, the page and the desktop app read the same `AGENT_OFFICE_PORT`, so one export moves the whole office — see [Configuration](#configuration).
 
 ## Running tests
 
@@ -204,13 +204,13 @@ The chat AI watcher (`scripts/chat-ai-watcher.sh`, log in `~/.agent-office/chat-
 
 ## Auto-permissions
 
-The repo includes `.claude/settings.json` which auto-allows curl commands to the local office server (`127.0.0.1:3334`) and the start/stop scripts. This means the chat monitor cron and office commands run without permission prompts.
+The repo includes `.claude/settings.json` which auto-allows `curl` commands to the local office server (`127.0.0.1:3334`) and `node scripts/start-office.mjs` / `node scripts/stop-office.mjs`. This means the chat monitor cron and office commands run without permission prompts.
 
 ## Payroll, electricity and memory
 
 A wall panel appears above the chat the moment Claude Code sends its first status line — or, for a session without one, once its transcript has a reply in it (see below) — and not before. **PAYROLL** is what the open sessions have cost, with the $/min burn over the last five minutes underneath; **ELECTRICITY** is the tokens the API chews through per minute (context re-reads included — that is what you pay for) as a gauge whose stripes flow faster the harder it burns; **MEMORY** is the context-window fill — amber past 70 %, red past 90 %, and once a session passes 85 % the chat gets a "Claude's desk is getting cluttered" line (once per session). claude.ai subscribers also get a **5h** pill with the five-hour rate-limit utilisation. Hover any meter for the exact numbers and the model; with several terminals open the panel stacks one row per session (up to four).
 
-The numbers are Claude Code's own: `npm run install-hooks` registers `hooks/status-line.sh` as the [`statusLine`](https://code.claude.com/docs/en/statusline) command (and as `subagentStatusLine`, which adds per-worker token counts) next to the hooks. It forwards the JSON to `POST /status` (same bearer token as `/event`) and prints `<model> · ctx <used>% · $<cost>`. **If you already had a status line, you keep it**: the installer saves your command in `~/.agent-office/statusline-prev` and `status-line.sh` runs it with the same input and prints its output, so what you see does not change. A command only counts as the office's when it runs a path ending in `hooks/status-line.sh`; anything else, `my-status-line.sh` and `~/.claude/status-line.sh` included, is yours and gets chained. `bash hooks/install-hooks.sh --no-status-line` skips the status line altogether, and `npm run install-status-line` registers it alone (no hooks), which is what a plugin install wants. `GET /status` returns the sessions and the totals (cost today, tokens/min, $/min); nothing is persisted, and a session that goes quiet for `AGENT_OFFICE_STALE_MINUTES` drops off the panel. Claude Code re-runs the status line only when something changes, so an idle session reports nothing: the server re-reads the burn once a minute and the panel follows it down to zero as the five-minute window empties. Cost today counts a session that dropped off and came back later the same day (a long lunch, `claude --resume`) once, not twice.
+The numbers are Claude Code's own: `npm run install-hooks` registers `hooks/status-line.mjs` as the [`statusLine`](https://code.claude.com/docs/en/statusline) command (and as `subagentStatusLine`, which adds per-worker token counts) next to the hooks. It forwards the JSON to `POST /status` (same bearer token as `/event`) and prints `<model> · ctx <used>% · $<cost>`. **If you already had a status line, you keep it**: the installer saves your command in `~/.agent-office/statusline-prev` and `status-line.mjs` runs it with the same input and prints its output, so what you see does not change. A command only counts as the office's when it runs a path ending in `hooks/status-line.mjs` (or the older `.sh`); anything else, `my-status-line.sh` and `~/.claude/status-line.sh` included, is yours and gets chained. `node hooks/install-hooks.mjs --no-status-line` skips the status line altogether, and `npm run install-status-line` registers it alone (no hooks), which is what a plugin install wants. `GET /status` returns the sessions and the totals (cost today, tokens/min, $/min); nothing is persisted, and a session that goes quiet for `AGENT_OFFICE_STALE_MINUTES` drops off the panel. Claude Code re-runs the status line only when something changes, so an idle session reports nothing: the server re-reads the burn once a minute and the panel follows it down to zero as the five-minute window empties. Cost today counts a session that dropped off and came back later the same day (a long lunch, `claude --resume`) once, not twice.
 
 **Without the status line.** Two common setups never send one: the plugin install (a plugin cannot register `statusLine`) and headless `claude -p` runs (no status line is rendered at all). Their hooks still report, and every hook event names the session's transcript, so for such a session the server estimates **MEMORY** from it (`server/meterEstimate.js`): the context in use is the last reply's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens` (the number Claude Code itself reports as a resumed session's `context_tokens` and a compaction's `preTokens`), and the window is the model's:
 
@@ -239,19 +239,19 @@ Agents can talk to each other, not just to you. A directed message shows up in t
 
 ```bash
 # Who is in the office?
-python3 scripts/agent-message.py --who
+node scripts/agent-message.mjs --who
 
 # Send a directed message (type: message | question | review_request | task_handoff)
-python3 scripts/agent-message.py --from Reviewer --role code-reviewer \
+node scripts/agent-message.mjs --from Reviewer --role code-reviewer \
   --to Debugger --type review_request 'can you check the token refresh in auth.ts?'
 
 # Read your inbox (clears the unread badge on your desk; --peek to leave it)
-python3 scripts/agent-message.py --inbox Debugger
+node scripts/agent-message.mjs --inbox Debugger
 ```
 
 Agents with unread messages get a red ✉ badge over their head until they read their inbox.
 
-Under the hood: `POST /chat/reply` takes `recipient`, `type` and `replyTo` (a leading `@Name` in the text works too), `GET /chat?recipient=<name>` returns a recipient's messages, `GET /agents` lists who's in the office, and the latest message per recipient is written to `~/.agent-office/inbox/<name>.json` for sessions that poll. Agents can't message themselves, and a pair of agents is limited to 10 messages a minute (`AGENT_OFFICE_A2A_LIMIT`) so two bots can't loop forever. `POST /chat/reply` and `POST /chat/inbox/read` speak for an agent, so they need the office bearer token (`Authorization: Bearer $(cat ~/.agent-office/auth-token)`); `scripts/agent-message.py` reads the token file for you. The read-only `--who` and `--inbox` listings do not.
+Under the hood: `POST /chat/reply` takes `recipient`, `type` and `replyTo` (a leading `@Name` in the text works too), `GET /chat?recipient=<name>` returns a recipient's messages, `GET /agents` lists who's in the office, and the latest message per recipient is written to `~/.agent-office/inbox/<name>.json` for sessions that poll. Agents can't message themselves, and a pair of agents is limited to 10 messages a minute (`AGENT_OFFICE_A2A_LIMIT`) so two bots can't loop forever. `POST /chat/reply` and `POST /chat/inbox/read` speak for an agent, so they need the office bearer token (`Authorization: Bearer <token>`, the contents of `~/.agent-office/auth-token`); `scripts/agent-message.mjs` reads the token file for you. The read-only `--who` and `--inbox` listings do not.
 
 ### A2A protocol
 
@@ -266,16 +266,8 @@ The office also speaks a subset of the [Agent2Agent (A2A) protocol](https://a2a-
 `GET /.well-known/agent-card.json` and `GET /a2a/agents` are open (and the cards advertise a `bearer` security scheme). `POST /a2a` delivers a message as an agent, so it needs the office token — send it as `Authorization: Bearer <token>`, the contents of `~/.agent-office/auth-token`:
 
 ```bash
-curl -s 127.0.0.1:3334/a2a \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $(cat ~/.agent-office/auth-token)" -d '{
-  "jsonrpc": "2.0", "id": 1, "method": "message/send",
-  "params": { "message": {
-    "kind": "message", "messageId": "m1", "role": "agent",
-    "parts": [{ "kind": "text", "text": "can you check token refresh?" }],
-    "metadata": { "from": "Reviewer", "to": "Debugger", "type": "review_request" }
-  } }
-}'
+node -e "fetch('http://127.0.0.1:3334/a2a',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+require('fs').readFileSync(require('os').homedir()+'/.agent-office/auth-token','utf8').trim()},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'message/send',params:{message:{kind:'message',messageId:'m1',role:'agent',parts:[{kind:'text',text:'can you check token refresh?'}],metadata:{from:'Reviewer',to:'Debugger',type:'review_request'}}}})}).then(r=>r.text()).then(console.log)"
+
 ```
 
 The recipient goes in `metadata.to` (name, role or office id); replies thread through `referenceTaskIds` or `metadata.replyTo`. Tasks and streaming aren't supported: every message is delivered as-is and the stored message comes back as the result. Without the token the call returns a JSON-RPC error with code `-32001`.
@@ -327,10 +319,10 @@ Everything is optional; the defaults are the office as described above. Set thes
 |---|---|---|---|
 | `AGENT_OFFICE_PORT` | `3334` | server, hook, status line, office scripts, `npm run doctor`, Vite dev (proxy and page), desktop app and tray | The office server's port. Not a port (letters, `0`, `70000`)? The server warns and uses 3334, as do Vite and the desktop app; the shell hooks and scripts use the value as given, so fix it rather than rely on that. The page served by the server needs nothing: it talks to the origin it was loaded from |
 | `AGENT_OFFICE_HOST` | `127.0.0.1` | server | The bind address, **IPv4 loopback only**: `127.0.0.1` or `localhost`, and both bind `127.0.0.1` (`localhost` is not left to the resolver, which may answer `::1`). `::1` is refused too, with the reason logged: the office scripts, `npm run doctor`, the desktop app and `/agent-office:office` all dial `127.0.0.1`, which a server on `[::1]` alone would refuse. Anything else (`0.0.0.0`, a LAN address) is refused with the reason logged and the server binds `127.0.0.1` — see [Security](#security) |
-| `AGENT_OFFICE_UI_PORT` | `3333` | `start-office.sh`, `stop-office.sh`, the server's origin allowlist | The Vite dev server's port (`start-office.sh` runs `vite --port`); `npm run dev` always uses 3333 |
+| `AGENT_OFFICE_UI_PORT` | `3333` | `start-office.mjs`, `stop-office.mjs`, the server's origin allowlist | The Vite dev server's port (`start-office.mjs` runs `vite --port`); `npm run dev` always uses 3333 |
 | `AGENT_OFFICE_HOME` | `~/.agent-office` | server, hook, status line, scripts | The runtime dir: auth token, `agents.json`, `chat.db`, inbox files, pid files |
-| `AGENT_OFFICE_EVENT_URL` | `http://localhost:$AGENT_OFFICE_PORT/event` | hook (`agent-tracker.sh`) | The full event URL; wins over `AGENT_OFFICE_PORT` |
-| `AGENT_OFFICE_STATUS_URL` | `http://localhost:$AGENT_OFFICE_PORT/status` | status line (`status-line.sh`) | The full status URL; wins over `AGENT_OFFICE_PORT` |
+| `AGENT_OFFICE_EVENT_URL` | `http://localhost:$AGENT_OFFICE_PORT/event` | hook (`agent-tracker.mjs`) | The full event URL; wins over `AGENT_OFFICE_PORT` |
+| `AGENT_OFFICE_STATUS_URL` | `http://localhost:$AGENT_OFFICE_PORT/status` | status line (`status-line.mjs`) | The full status URL; wins over `AGENT_OFFICE_PORT` |
 | `AGENT_OFFICE_CONFIG_DIR` | the directory holding `package.json` | server | Where `office.config.json` is read from (see [Customise your character](../README.md#customise-your-character)) |
 | `AGENT_OFFICE_REGISTRY_DIR` | `$CLAUDE_CONFIG_DIR/sessions` | server | Claude Code's session registry, the source of the *not hooked* pills (see [Sessions without hooks](#connect-claude-code)) |
 | `AGENT_OFFICE_TASKS_DIR` | `$CLAUDE_CONFIG_DIR/tasks` | server | Where Claude Code keeps each session's task list, the source of the task board (see [Task board](#connect-claude-code)) |
@@ -409,7 +401,7 @@ it was not running. You rarely type the link:
   (A Snap-confined browser cannot read hidden folders in your home; paste the
   printed link there.) `--dev` opens the Vite dev server's page instead,
   `--print` only prints.
-- **`bash scripts/start-office.sh`** does the same for the page it starts.
+- **`node scripts/start-office.mjs`** does the same for the page it starts.
 - **The desktop app** reads the token file once its server answers `/health`
   and loads the window with the link; *Open in browser* in its menu goes
   through the same redirect page.
@@ -464,7 +456,7 @@ requires the token, conversation text requires it, and the rest stay open:
   verifies the signature over the raw body, in constant time, for a timestamp
   within ±60 s, so a signature a reader scrapes from `ps` is useless beyond
   replaying that one request inside the window (the victim's own event). The
-  office scripts (`chat-post.py`, `chat-reply.py`, `agent-message.py`, the chat
+  office scripts (`chat-post.mjs`, `chat-reply.mjs`, `agent-message.mjs`, the chat
   watchers) and A2A clients instead send `Authorization: Bearer <token>` from
   their own memory (never argv), and the server accepts either. The link the
   server prints carries the token, so if you redirect the server's output to a
@@ -474,7 +466,7 @@ requires the token, conversation text requires it, and the rest stay open:
   the chat-monitor state, the redirect page) is mode `0600` and the dir is
   `0700`, so another local user can't read directed messages, the stored
   prompts or the latest chat. SQLite would otherwise create `chat.db` under the
-  process umask (often `0644`), and a dir the installer or `start-office.sh`
+  process umask (often `0644`), and a dir the installer or `start-office.mjs`
   made first stays `0755`, so the server tightens both — and any already-loose
   `chat.db*` — on every start, repairing an older install.
 - **Your prompts and Claude's replies are stored locally**, in `~/.agent-office/chat.db`
@@ -482,7 +474,7 @@ requires the token, conversation text requires it, and the rest stay open:
   `summary` (the default) keeps the first 200 characters of each, `full` keeps up
   to 2000, `off` keeps nothing — state transitions only, no text stored or
   broadcast. Change it with
-  `curl -X POST http://127.0.0.1:3334/settings -H "Authorization: Bearer $(cat ~/.agent-office/auth-token)" -H 'Content-Type: application/json' -d '{"logPrompts":"off"}'`
+  `node -e "fetch('http://127.0.0.1:3334/settings',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+require('fs').readFileSync(require('os').homedir()+'/.agent-office/auth-token','utf8').trim()},body:JSON.stringify({logPrompts:'off'})}).then(r=>r.text()).then(console.log)"`
   (it persists in `~/.agent-office/settings.json`; `GET /settings` shows it, and
   the chat header shows the current level — `prompts: summary` — with that
   command in its tooltip). Lowering the level also trims what the sessions
@@ -490,7 +482,7 @@ requires the token, conversation text requires it, and the rest stay open:
   `agents.json` — so `off` stops an earlier prompt riding on later broadcasts.
   The hook itself never forwards more than 2000 characters, nor a compaction
   summary or a worker's result. Rows already stored in `chat.db` are removed
-  with `/clear` (token required) — e.g. `python3 scripts/chat-post.py /clear`,
+  with `/clear` (token required) — e.g. `node scripts/chat-post.mjs /clear`,
   which sends the token from its own memory — and that blanks each session's
   last prompt and reply as well.
 - **Answering a permission dialog** is the one action the office page takes
@@ -531,6 +523,6 @@ requires the token, conversation text requires it, and the rest stay open:
 
 Open and planned work lives in [GitHub issues](https://github.com/W17ant/Claude-Office/issues). Next up, roughly in order:
 
-- **OS notification** when a permission wait starts, now that the office can answer the dialog itself (`notify.sh` already covers macOS and Linux; the server only calls it for chat mentions and failed agents today)
+- **OS notification** when a permission wait starts, now that the office can answer the dialog itself (`server/notify.js` already covers macOS, Linux and Windows; the server only calls it for chat mentions and failed agents today)
 - **`npx` one-liner** to start the office without a checkout
 - **Spooky Sprint**, a seasonal variant on the incident-mode axis — art-gated

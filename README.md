@@ -157,6 +157,8 @@ Claude Code ──hooks + status line──> Express Server ──WebSocket─�
 
 ## Quick Start
 
+Needs Node 22+ and, for the chat AI watcher, the Claude Code CLI (`claude`).
+
 ```bash
 # Clone
 git clone https://github.com/W17ant/Claude-Office.git
@@ -169,10 +171,10 @@ npm install
 npm run install-hooks
 
 # Start everything (server + frontend + chat watcher) and open the office
-bash scripts/start-office.sh
+node scripts/start-office.mjs
 
 # Stop everything
-bash scripts/stop-office.sh
+node scripts/stop-office.mjs
 ```
 
 Now spawn agents in Claude Code and watch them appear in the office.
@@ -180,7 +182,7 @@ Now spawn agents in Claude Code and watch them appear in the office.
 - **Rather have an app?** Grab the installer for Mac, Windows or Linux from [Releases](https://github.com/W17ant/Claude-Office/releases).
 - **Nothing showing up?** `npm run doctor` checks the whole setup and tells you what's missing.
 - **Want it gone?** `npm run uninstall-hooks` takes the hooks back out.
-- Works on macOS and Linux, and on Windows through WSL or Git Bash.
+- Works natively on macOS, Linux and Windows.
 
 Installing it as a Claude Code plugin, the hook events, every setting and the security model are all in the [reference](docs/reference.md).
 
@@ -235,7 +237,7 @@ node scripts/extract-boss-sprite.mjs your-character.png MyChar-1
 | `/help` | Show available commands |
 | `/the-office` | Toggle Dunder Mifflin mode |
 
-To wipe the chat history, run `python3 scripts/chat-post.py /clear` from the checkout.
+To wipe the chat history, run `node scripts/chat-post.mjs /clear` from the checkout.
 
 ### Agent Routing
 
@@ -294,9 +296,9 @@ Claude-Office/
 │   ├── index.js            # HTTP endpoints + WS broadcast
 │   └── chat-db.js          # SQLite wrapper
 ├── hooks/                  # Claude Code hooks
-│   ├── agent-tracker.sh    # Forwards events to the server
-│   ├── status-line.sh      # Feeds the meters
-│   └── install-hooks.sh    # npm run install-hooks
+│   ├── agent-tracker.mjs   # Forwards events to the server
+│   ├── status-line.mjs     # Feeds the meters
+│   └── install-hooks.mjs   # npm run install-hooks
 ├── scripts/                # start / stop / doctor / chat watcher
 ├── electron/               # Desktop app
 ├── public/sprites/         # Pixel art characters + effects

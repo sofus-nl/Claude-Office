@@ -14,8 +14,8 @@ What you would do with it, or what you are missing today.
 
 **Environment** (if it matters)
 - Claude Code version (`claude --version`):
-- OS (macOS / Linux / Windows via WSL or Git Bash):
-- How you run the office: `npm run build && npm run server` / `bash scripts/start-office.sh` / `npm run dev:all` / desktop app
+- OS (macOS / Linux / Windows):
+- How you run the office: `npm run build && npm run server` / `node scripts/start-office.mjs` / `npm run dev:all` / desktop app
 
 **Anything else**
 Sketches, screenshots, links to the hook or status-line docs.

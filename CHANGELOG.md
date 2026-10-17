@@ -5,6 +5,15 @@ All notable changes to Claude Office. Numbers refer to pull requests.
 ## Unreleased
 
 - Prod Is Down now sounds the alarm: as an incident starts the room flashes deep red three times over 1.8 s (under the 3-a-second photosensitivity limit), then settles into a darker red tint. A reload halfway through an incident, a mini-incident from a random event, and reduced-motion settings get no flash.
+- Claude Office runs natively on Windows, macOS and Linux. The hooks, the status line, the installer, the doctor and the start/stop scripts are Node now, so the only requirements are Node 22 and the Claude Code CLI (for the chat AI watcher): no bash, python3 or curl.
+- New Node entry points: `hooks/agent-tracker.mjs`, `hooks/status-line.mjs`, `hooks/install-hooks.mjs`, `scripts/start-office.mjs`, `scripts/stop-office.mjs`, `scripts/chat-ai-watcher.mjs`, `scripts/chat-post.mjs`, `scripts/chat-reply.mjs`, `scripts/chat-poll.mjs`, `scripts/agent-message.mjs`, `scripts/gather-context.mjs`, `scripts/split-character.mjs` and `scripts/extract-boss-sprite.mjs`. The documented bash and python commands (`hooks/install-hooks.sh`, `hooks/agent-tracker.sh`, `hooks/status-line.sh`, `scripts/start-office.sh`, `scripts/stop-office.sh`, `scripts/chat-post.py`, `scripts/agent-message.py`) are deprecated forwards that run the Node scripts. The installer migrates existing `bash .../agent-tracker.sh` hook entries.
+- Removed: `scripts/notify.sh`, `chat-ai-watcher.sh`, `gather-context.sh`, `chat-watcher.sh`, `chat-bridge.sh`, `chat-reply.py`, `chat-poll.py`, `split-character.py` and `extract-boss-sprite.py`. Sprite extraction no longer needs Python or Pillow; 16-bit, interlaced and sub-8-bit greyscale PNGs are refused.
+- `CHAT_AI_CLAUDE` sets the path of the `claude` binary the chat AI watcher runs (a `.mjs` or `.js` runs under `node`; the prompt goes to `claude -p` on stdin).
+- Notifications come from the server (`server/notify.js`): `osascript` on macOS, `notify-send` on Linux, and Windows toasts through Windows PowerShell.
+- Start and stop on Windows stop each process tree with `taskkill`. `npm start` works in cmd.exe.
+- The auth token file on Windows is protected by the user-profile ACL, since POSIX modes do not exist there; `npm run doctor` says so. A token file that is a symlink is refused on Windows too.
+- CI runs the test suite on Ubuntu, macOS and Windows.
+- Known limit: a plugin install whose only `node` comes from nvm, or from a GUI-launched Claude Code, may need `npm run install-hooks`. `npm run doctor` warns about it.
 
 ## 1.1.1 — 2026-10-15
 
