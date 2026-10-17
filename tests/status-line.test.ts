@@ -1,11 +1,15 @@
 /**
- * hooks/status-line.sh — the Claude Code statusLine command: POSTs the
+ * hooks/status-line.mjs — the Claude Code statusLine command: POSTs the
  * session's cost / context / rate-limit numbers to /status and prints the
  * line Claude Code displays (or the output of a status line it was wrapped
  * around). Runs the real script against a capture server.
+ *
+ * The chained commands run under bash on POSIX and under Git Bash (or
+ * PowerShell) on Windows, so they are plain `echo`, `exit` and `node -e "..."`
+ * with no syntax that differs between those shells.
  */
 
-import { execFileSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -13,8 +17,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { officeUrl } from '../hooks/office-client.mjs'
 
-const SCRIPT = fileURLToPath(new URL('../hooks/status-line.sh', import.meta.url))
+const SCRIPT = fileURLToPath(new URL('../hooks/status-line.mjs', import.meta.url))
 
 /**
  * The stdin JSON Claude Code 2.1.300 gives a statusLine command: the shape
@@ -138,28 +143,38 @@ function officeHome({ token, prev, subagentPrev }: { token?: string; prev?: stri
   return home
 }
 
+/** Async, not *Sync: the in-process capture server needs this event loop to answer the script's POST. */
 function run(payload: unknown, home: string, { args = [], url = serverUrl, env = {} }: { args?: string[]; url?: string; env?: Record<string, string> } = {}) {
   const started = Date.now()
-  const out = execFileSync('bash', [SCRIPT, ...args], {
-    input: typeof payload === 'string' ? payload : JSON.stringify(payload),
-    encoding: 'utf8',
-    timeout: 10_000,
-    env: { ...process.env, AGENT_OFFICE_STATUS_URL: url, AGENT_OFFICE_HOME: home, AGENT_OFFICE_PREV_STATUSLINE: '', ...env },
+  return new Promise<{ out: string; ms: number }>((resolve, reject) => {
+    const child = spawn(process.execPath, [SCRIPT, ...args], {
+      env: { ...process.env, AGENT_OFFICE_STATUS_URL: url, AGENT_OFFICE_HOME: home, AGENT_OFFICE_PREV_STATUSLINE: '', ...env },
+      windowsHide: true,
+    })
+    let out = ''
+    const timer = setTimeout(() => { child.kill(); reject(new Error('status-line.mjs timed out')) }, 10_000)
+    child.stdout.setEncoding('utf8').on('data', c => { out += c })
+    child.on('error', reject)
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (code === 0) resolve({ out, ms: Date.now() - started })
+      else reject(new Error(`status-line.mjs exited ${code}`))
+    })
+    child.stdin.end(typeof payload === 'string' ? payload : JSON.stringify(payload))
   })
-  return { out, ms: Date.now() - started }
 }
 
-/** The backgrounded curl lands shortly after the script exits. */
+/** The script waits for the office's answer before it exits, so the POSTs have landed; the wait only tolerates slack. */
 async function posted(count = 1, ms = 3000): Promise<Captured[]> {
   const deadline = Date.now() + ms
   while (captured.length < count && Date.now() < deadline) await new Promise(r => setTimeout(r, 25))
   return captured
 }
 
-describe('status-line.sh: statusLine', () => {
+describe('status-line.mjs: statusLine', () => {
   it('prints "<model> · ctx <used>% · $<cost>" and POSTs a session_status SIGNED (no token on the wire)', async () => {
     const home = officeHome({ token: 'a'.repeat(64) })
-    const { out } = run(STATUS_JSON, home)
+    const { out } = await run(STATUS_JSON, home)
     expect(out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
 
     const [req] = await posted()
@@ -173,7 +188,7 @@ describe('status-line.sh: statusLine', () => {
   })
 
   it('posts without an Authorization or signature header when there is no token file', async () => {
-    const { out } = run(STATUS_JSON, officeHome())
+    const { out } = await run(STATUS_JSON, officeHome())
     expect(out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
     const [req] = await posted()
     expect(req.authorization).toBeUndefined()
@@ -183,7 +198,7 @@ describe('status-line.sh: statusLine', () => {
 
   it('posts to 127.0.0.1:$AGENT_OFFICE_PORT/status when AGENT_OFFICE_STATUS_URL is unset', async () => {
     const port = new URL(serverUrl).port
-    const { out } = run(STATUS_JSON, officeHome(), { env: { AGENT_OFFICE_STATUS_URL: '', AGENT_OFFICE_PORT: port } })
+    const { out } = await run(STATUS_JSON, officeHome(), { env: { AGENT_OFFICE_STATUS_URL: '', AGENT_OFFICE_PORT: port } })
     expect(out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
     const [req] = await posted()
     expect(req).toBeDefined()
@@ -193,15 +208,15 @@ describe('status-line.sh: statusLine', () => {
 
   it('AGENT_OFFICE_STATUS_URL wins over AGENT_OFFICE_PORT', async () => {
     const closedPort = new URL(closedUrl).port
-    run(STATUS_JSON, officeHome(), { env: { AGENT_OFFICE_PORT: closedPort } })
+    await run(STATUS_JSON, officeHome(), { env: { AGENT_OFFICE_PORT: closedPort } })
     const [req] = await posted()
     expect(req).toBeDefined()
     expect(req.body.type).toBe('session_status')
   })
 
   it('defaults to 127.0.0.1:3334/status (never `localhost`, which may resolve to [::1])', () => {
-    const source = readFileSync(SCRIPT, 'utf8')
-    expect(source).toContain('SERVER_URL="${AGENT_OFFICE_STATUS_URL:-http://127.0.0.1:${AGENT_OFFICE_PORT:-3334}/status}"')
+    expect(officeUrl('/status', undefined, {})).toBe('http://127.0.0.1:3334/status')
+    expect(readFileSync(SCRIPT, 'utf8')).toContain("officeUrl('/status', process.env.AGENT_OFFICE_STATUS_URL)")
   })
 
   it('handles the early-session shape: null used_percentage, no rate_limits, no cost yet, no effort', async () => {
@@ -216,7 +231,7 @@ describe('status-line.sh: statusLine', () => {
       context_window: { total_input_tokens: 0, total_output_tokens: 0, context_window_size: 200000, used_percentage: null, remaining_percentage: null, current_usage: null },
       exceeds_200k_tokens: false,
     }
-    const { out } = run(early, officeHome())
+    const { out } = await run(early, officeHome())
     expect(out).toBe('Opus · ctx 0% · $0.00\n')
     const [req] = await posted()
     expect(req.body).toEqual({
@@ -230,56 +245,56 @@ describe('status-line.sh: statusLine', () => {
 
   it('falls back to cwd for the project when workspace is absent, and forwards spend_limit', async () => {
     const payload = { ...STATUS_JSON, workspace: undefined, cwd: '/srv/apps/billing-api', rate_limits: { spend_limit: { used_percentage: 62.8, resets_at: 1740787200, used_usd: 314.12, limit_usd: 500, period: 'monthly' } } }
-    run(payload, officeHome())
+    await run(payload, officeHome())
     const [req] = await posted()
     expect(req.body.project).toBe('billing-api')
     expect(req.body.rateLimits).toEqual({ spendLimit: 62.8, spendLimitResetsAt: 1740787200 })
   })
 
   it('chains the status line it was wrapped around: same stdin, its output is printed, the POST still goes out', async () => {
-    const prev = `python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("prev:" + d["model"]["display_name"] + ":" + str(d["context_window"]["used_percentage"]))'`
+    const prev = `node -e "const d = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log('prev:' + d.model.display_name + ':' + d.context_window.used_percentage)"`
     const home = officeHome({ token: 't', prev })
-    const { out } = run(STATUS_JSON, home)
+    const { out } = await run(STATUS_JSON, home)
     expect(out).toBe('prev:Haiku 5.5:4.4\n')
     const [req] = await posted()
     expect(req.body).toEqual(EXPECTED_EVENT)
   })
 
   it('AGENT_OFFICE_PREV_STATUSLINE overrides the saved command', async () => {
-    const { out } = run(STATUS_JSON, officeHome({ prev: 'echo from-file' }), { env: { AGENT_OFFICE_PREV_STATUSLINE: 'echo from-env' } })
+    const { out } = await run(STATUS_JSON, officeHome({ prev: 'echo from-file' }), { env: { AGENT_OFFICE_PREV_STATUSLINE: 'echo from-env' } })
     expect(out).toBe('from-env\n')
     expect(await posted()).toHaveLength(1)
   })
 
   it('prints the default line when the chained command fails or prints nothing', async () => {
-    expect(run(STATUS_JSON, officeHome({ prev: 'exit 3' })).out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
-    expect(run(STATUS_JSON, officeHome({ prev: 'cat > /dev/null' })).out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
+    expect((await run(STATUS_JSON, officeHome({ prev: 'exit 3' }))).out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
+    expect((await run(STATUS_JSON, officeHome({ prev: 'node -e "process.stdin.resume()"' }))).out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
     expect(await posted(2)).toHaveLength(2)
   })
 
-  it('still prints the line, exits 0 and does not wait when the server is down', () => {
-    const { out, ms } = run(STATUS_JSON, officeHome({ token: 't' }), { url: closedUrl })
+  it('still prints the line, exits 0 and does not wait when the server is down', async () => {
+    const { out, ms } = await run(STATUS_JSON, officeHome({ token: 't' }), { url: closedUrl })
     expect(out).toBe('Haiku 5.5 · ctx 4% · $0.01\n')
-    // The curl is backgrounded with --max-time 1; the script itself is one python3 call
+    // A refused connection fails at once; a hung server would cost the 1 s POST bound, not more
     expect(ms).toBeLessThan(1500)
     expect(captured).toHaveLength(0)
   })
 
   it('exits 0 on garbage stdin and posts nothing', async () => {
-    const { out } = run('this is not json', officeHome())
+    const { out } = await run('this is not json', officeHome())
     expect(out).toBe('Claude · ctx 0% · $0.00\n')
     await new Promise(r => setTimeout(r, 300))
     expect(captured).toHaveLength(0)
   })
 
-  it('exits 0 and prints nothing on empty stdin', () => {
-    expect(run('', officeHome()).out).toBe('')
+  it('exits 0 and prints nothing on empty stdin', async () => {
+    expect((await run('', officeHome())).out).toBe('')
   })
 })
 
-describe('status-line.sh --subagents: subagentStatusLine', () => {
+describe('status-line.mjs --subagents: subagentStatusLine', () => {
   it('posts an agent_status with every visible row\'s tokens and context size, printing nothing (default rows kept)', async () => {
-    const { out } = run(SUBAGENT_JSON, officeHome({ token: 'a'.repeat(64) }), { args: ['--subagents'] })
+    const { out } = await run(SUBAGENT_JSON, officeHome({ token: 'a'.repeat(64) }), { args: ['--subagents'] })
     expect(out).toBe('')
     const [req] = await posted()
     expect(req.authorization).toBeUndefined()
@@ -295,15 +310,15 @@ describe('status-line.sh --subagents: subagentStatusLine', () => {
   })
 
   it('posts nothing when there are no rows', async () => {
-    const { out } = run({ ...SUBAGENT_JSON, tasks: [] }, officeHome(), { args: ['--subagents'] })
+    const { out } = await run({ ...SUBAGENT_JSON, tasks: [] }, officeHome(), { args: ['--subagents'] })
     expect(out).toBe('')
     await new Promise(r => setTimeout(r, 300))
     expect(captured).toHaveLength(0)
   })
 
   it('prints the rows of a chained subagentStatusLine command', async () => {
-    const prev = `python3 -I -c 'import json,sys; [print(json.dumps({"id": t["id"], "content": t["label"]})) for t in json.load(sys.stdin)["tasks"]]'`
-    const { out } = run(SUBAGENT_JSON, officeHome({ subagentPrev: prev }), { args: ['--subagents'] })
+    const prev = `node -e "JSON.parse(require('fs').readFileSync(0, 'utf8')).tasks.forEach(t => console.log(JSON.stringify({ id: t.id, content: t.label })))"`
+    const { out } = await run(SUBAGENT_JSON, officeHome({ subagentPrev: prev }), { args: ['--subagents'] })
     expect(out.trim().split('\n').map(l => JSON.parse(l))).toEqual([
       { id: 'ac5ff55b850b4fecf', content: 'Reading files' },
       { id: 'b17c2d9e4f0a1b2c3', content: 'done' },
