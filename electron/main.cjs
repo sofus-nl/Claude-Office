@@ -200,6 +200,8 @@ function startServer() {
   const child = server.adopt(spawn(command, [SERVER_ENTRY], {
     stdio: 'pipe',
     env,
+    // Windows: a console node.exe started by the (GUI) app would open its own console window
+    windowsHide: true,
   }))
 
   child.stdout.on('data', (data) => {
