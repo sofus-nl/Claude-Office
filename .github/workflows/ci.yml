@@ -7,7 +7,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # The office runs natively on all three: the hooks, the installer and the
+    # scripts are Node, so every OS runs the whole suite.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,17 +30,20 @@ jobs:
 
       - name: Type-check
         # src/config.ts imports office.config.json, which is gitignored
+        shell: bash
         run: |
           cp office.config.example.json office.config.json
           npx tsc --noEmit -p .
 
       - name: Install Claude Code
+        if: matrix.os == 'ubuntu-latest'
         # The npm package installs the same native binary as the standalone
         # installer. `claude plugin validate` only reads files, so no login
         # or network access is needed once it is installed.
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Validate plugin manifests
+        if: matrix.os == 'ubuntu-latest'
         # The repository root is the agent-office plugin and its own
         # marketplace (.claude-plugin/). --strict fails on warnings too, so an
         # unknown field or a missing description stops here, not on install.
@@ -48,9 +57,11 @@ jobs:
         run: npm test
 
       - name: Build
+        if: matrix.os == 'ubuntu-latest'
         run: npx vite build
 
       - name: Check assets
+        if: matrix.os == 'ubuntu-latest'
         # Every sprite and room the code can ask for exists in public/, and
         # public/ stays under its size budget (scripts/check-assets.mjs)
         run: npm run check-assets

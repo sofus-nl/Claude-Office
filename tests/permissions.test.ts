@@ -495,7 +495,7 @@ describe('the answerPermissions setting and its marker file', () => {
     const marker = join(office.dir, 'answer-permissions')
     expect(office.server.ANSWER_MARKER_FILE).toBe(marker)
     expect(existsSync(marker)).toBe(true)
-    expect(statSync(marker).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(marker).mode & 0o777).toBe(0o600)
     expect((await request(office.server.app).get('/settings')).body).toMatchObject({ answerPermissions: true, logPrompts: 'summary' })
 
     const ui = (token: string, body: unknown) => request(office.server.app).post('/settings').set('Authorization', `Bearer ${token}`).send(body as object)

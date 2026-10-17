@@ -51,7 +51,7 @@ const WORKER = [
 describe('agentTranscriptPath', () => {
   it('derives a worker file from the session transcript, the session id and the Claude agent id', () => {
     expect(agentTranscriptPath('/root/.claude/projects/-home-me-proj/8cf68f64-5433.jsonl', '8cf68f64-5433', 'ac5ff55b850b4fecf'))
-      .toBe('/root/.claude/projects/-home-me-proj/8cf68f64-5433/subagents/agent-ac5ff55b850b4fecf.jsonl')
+      .toBe(join('/root/.claude/projects/-home-me-proj/8cf68f64-5433/subagents/agent-ac5ff55b850b4fecf.jsonl'))
   })
 
   it('is null when a part is missing, the session file is not a .jsonl, or an id is not a plain identifier', () => {

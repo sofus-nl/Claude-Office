@@ -15,7 +15,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "concurrently \"vite\" \"sleep 2 && electron .\"",
+    "dev:electron": "concurrently \"vite\" \"node -e \\\"setTimeout(Boolean,2000)\\\" && electron .\"",
     "dev:all": "concurrently \"node server/index.js\" \"vite\"",
     "build": "tsc && vite build",
     "build:electron": "vite build && electron-builder",

@@ -730,7 +730,8 @@ describe('a permission dialog answered or dismissed in the terminal (the registr
     office.server.permissions.resolveSession(S, '')
   })
 
-  it('a leftover file whose pid now belongs to another process is not a session (the reused pid check, in the office)', async () => {
+  // Windows has no pid 1 for the leftover file to name
+  it.skipIf(process.platform === 'win32')('a leftover file whose pid now belongs to another process is not a session (the reused pid check, in the office)', async () => {
     const ghost = '66666666-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
     writeFileSync(join(regDir, '1.json'), JSON.stringify(entry({ pid: 1, sessionId: ghost, status: 'waiting', procStart: '99999999' })))
     office.server.registry.scan()

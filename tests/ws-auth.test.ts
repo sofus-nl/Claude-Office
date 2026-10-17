@@ -363,7 +363,7 @@ describe('the token file: reused when it is safe to trust, replaced otherwise', 
     expect(existsSync(tokenFile)).toBe(false)
     const lines = await started(office)
     expect(readFileSync(tokenFile, 'utf8')).toBe(office.server.AUTH_TOKEN)
-    expect(mode(tokenFile)).toBe(0o600)
+    if (process.platform !== 'win32') expect(mode(tokenFile)).toBe(0o600)
     expect(lines.join('\n')).toContain(`Auth token written to: ${tokenFile}`)
   })
 
@@ -379,12 +379,13 @@ describe('the token file: reused when it is safe to trust, replaced otherwise', 
       expect(office.server.AUTH_TOKEN).not.toBe(content)
       await started(office)
       expect(readFileSync(tokenFile, 'utf8')).toBe(office.server.AUTH_TOKEN)
-      expect(mode(tokenFile)).toBe(0o600)
+      if (process.platform !== 'win32') expect(mode(tokenFile)).toBe(0o600)
     })
   }
 
   for (const fileMode of [0o640, 0o604, 0o644, 0o660]) {
-    it(`replaces a token file other users could read (mode ${fileMode.toString(8)})`, async () => {
+    // Windows has no POSIX modes: the server trusts the profile ACL there (server/index.js readTokenFile)
+    it.skipIf(process.platform === 'win32')(`replaces a token file other users could read (mode ${fileMode.toString(8)})`, async () => {
       const { office, tokenFile } = await load(file => { writeFileSync(file, TOKEN); chmodSync(file, fileMode) })
       expect(office.server.AUTH_TOKEN).not.toBe(TOKEN)
       await started(office)
@@ -393,7 +394,7 @@ describe('the token file: reused when it is safe to trust, replaced otherwise', 
     })
   }
 
-  it('replaces a token file owned by someone else (simulated: another uid)', async () => {
+  it.skipIf(typeof process.getuid !== 'function')('replaces a token file owned by someone else (simulated: another uid)', async () => {
     const realUid = process.getuid!()
     const getuid = vi.spyOn(process, 'getuid').mockReturnValue(realUid + 4242)
     const { office, tokenFile } = await load(file => writeFileSync(file, TOKEN, { mode: 0o600 }))
