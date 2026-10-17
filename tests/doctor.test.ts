@@ -1,24 +1,28 @@
 /**
  * scripts/doctor.mjs — `npm run doctor`: the PASS / WARN / FAIL lines for
- * node, the hooks (settings.json or the plugin), the status line, the tools
- * on PATH, the server, the auth token and the build; exit 1 on any FAIL.
+ * node, the hooks (settings.json or the plugin), the status line, the server,
+ * the auth token and the build; exit 1 on any FAIL. Node is the only runtime.
  * Runs against temp HOME / CLAUDE_CONFIG_DIR / AGENT_OFFICE_HOME fixtures,
  * through runDoctor() and by spawning the script.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { listen, loadOffice, postEvent, removeOffice, type Office } from './helpers'
-import { runDoctor, checkNode, scriptPathIn, shellWords, inspectPlugin, COMMANDS, PASS, WARN, FAIL } from '../scripts/doctor.mjs'
+import { runDoctor, checkNode, checkToken, scriptPathIn, shellWords, inspectPlugin, COMMANDS, PASS, WARN, FAIL } from '../scripts/doctor.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const DOCTOR = join(ROOT, 'scripts', 'doctor.mjs')
-const INSTALLER = join(ROOT, 'hooks', 'install-hooks.sh')
-const TRACKER = join(ROOT, 'hooks', 'agent-tracker.sh')
+const INSTALLER = join(ROOT, 'hooks', 'install-hooks.mjs')
+const TRACKER = join(ROOT, 'hooks', 'agent-tracker.mjs')
+/** The installer writes (and the doctor prints) hook paths with forward slashes */
+const fwd = (p: string) => p.replace(/\\/g, '/')
+/** POSIX file modes do not exist here */
+const isWindows = process.platform === 'win32'
 
 type Line = { level: string; title: string; notes: string[] }
 type Report = { results: Line[]; ok: boolean; context: Record<string, unknown> }
@@ -37,13 +41,13 @@ function tmp(prefix: string) {
 /** The installer's environment: a temp HOME, never the caller's CLAUDE_CONFIG_DIR (the installer honours it) */
 function installerEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const { CLAUDE_CONFIG_DIR: _ignored, ...env } = process.env
-  return { ...env, HOME: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), ...extra }
+  return { ...env, HOME: home, USERPROFILE: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), ...extra }
 }
 
 /** A HOME with the real installer run into it (hooks + status line) */
 function installedHome(args: string[] = []) {
   const home = tmp('doctor-home-')
-  execFileSync('bash', [INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home) })
+  execFileSync(process.execPath, [INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home) })
   return home
 }
 
@@ -94,6 +98,15 @@ describe('doctor helpers', () => {
     expect(scriptPathIn('python3 ~/tools/claude-agent-tracker.sh.py', 'agent-tracker.sh')).toBeNull()
   })
 
+  it('knows the node form of both scripts as well as the bash one, whatever runs them', () => {
+    expect(scriptPathIn('node "/old/hooks/agent-tracker.mjs"', 'agent-tracker.mjs')).toBe('/old/hooks/agent-tracker.mjs')
+    expect(scriptPathIn('bash "/old/hooks/agent-tracker.sh"', 'agent-tracker.mjs')).toBe('/old/hooks/agent-tracker.sh')
+    expect(scriptPathIn('"/opt/node/bin/node" "/x/hooks/status-line.mjs" --subagents', 'status-line.mjs')).toBe('/x/hooks/status-line.mjs')
+    expect(scriptPathIn('node "C:\\x\\hooks\\status-line.mjs"', 'status-line.mjs')).toBe('C:\\x\\hooks\\status-line.mjs')
+    expect(scriptPathIn('node ~/.claude/my-status-line.mjs', 'status-line.mjs')).toBeNull()
+    expect(shellWords('node "C:\\x\\hooks\\agent-tracker.mjs"')).toEqual(['node', 'C:\\x\\hooks\\agent-tracker.mjs'])
+  })
+
   it('node: 20+ passes, older fails with the floor in the message', () => {
     expect(checkNode('22.22.0').level).toBe(PASS)
     expect(checkNode('20.0.0').level).toBe(PASS)
@@ -106,7 +119,7 @@ describe('doctor helpers', () => {
     const config = tmp('doctor-config-')
     const cacheCopy = join(config, 'plugins', 'cache', 'agent-office', 'agent-office', '1.0.0')
     mkdirSync(join(cacheCopy, 'hooks'), { recursive: true })
-    writeFileSync(join(cacheCopy, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
+    writeFileSync(join(cacheCopy, 'hooks', 'agent-tracker.mjs'), '')
     const settings = { enabledPlugins: { 'agent-office@agent-office': true } }
     const found = inspectPlugin(settings, config)
     expect(found.found).toBe(true)
@@ -116,7 +129,7 @@ describe('doctor helpers', () => {
     // installed_plugins.json names an installPath (v2: a list per key)
     const installDir = join(config, 'elsewhere')
     mkdirSync(join(installDir, 'hooks'), { recursive: true })
-    writeFileSync(join(installDir, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
+    writeFileSync(join(installDir, 'hooks', 'agent-tracker.mjs'), '')
     writeFileSync(join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'agent-office@agent-office': [{ scope: 'user', installPath: installDir, version: '1.0.0' }] } }))
     expect(inspectPlugin(settings, config).copies.map(c => c.source)).toEqual(['installed_plugins.json', 'plugins/cache/agent-office/agent-office/1.0.0'])
 
@@ -127,6 +140,16 @@ describe('doctor helpers', () => {
     expect(disabled.disabledKey).toBe('agent-office@agent-office')
     expect(disabled.copies.length).toBeGreaterThan(0)
     expect(inspectPlugin({}, config).enabledKey).toBeNull()
+  })
+
+  it('still finds a plugin copy from before the Node port (hooks/agent-tracker.sh only)', () => {
+    const config = tmp('doctor-config-')
+    const legacy = join(config, 'plugins', 'cache', 'agent-office', 'agent-office', '1.0.0')
+    mkdirSync(join(legacy, 'hooks'), { recursive: true })
+    writeFileSync(join(legacy, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
+    const found = inspectPlugin({ enabledPlugins: { 'agent-office@agent-office': true } }, config)
+    expect(found.found).toBe(true)
+    expect(found.copies[0].tracker).toBe(join(legacy, 'hooks', 'agent-tracker.sh'))
   })
 })
 
@@ -143,13 +166,14 @@ describe('runDoctor', () => {
     const hooks = line(r, 'hooks:')!
     expect(hooks.level).toBe(PASS)
     expect(hooks.title).toMatch(/^hooks: 19\/19 events run /)
-    expect(hooks.title).toContain(TRACKER)
+    expect(hooks.title).toContain(fwd(TRACKER))
     expect(lines(r, 'hooks:')).toHaveLength(1)                 // no "not this checkout" / duplicate lines
     expect(lines(r, 'plugin')).toHaveLength(0)
     const status = line(r, 'status line:')!
     expect(status.level).toBe(PASS)
     expect(status.title).toContain('statusLine + subagentStatusLine run')
-    for (const tool of ['python3:', 'bash:', 'curl:']) expect(levelOf(r, tool)).toBe(PASS)
+    // node is the only runtime: nothing asks for bash, python3 or curl
+    expect(r.results.some(l => /^(python3|bash|curl):/.test(l.title))).toBe(false)
     const server = line(r, 'server:')!
     expect(server.level).toBe(WARN)
     expect(server.title).toContain('nothing answers on http://127.0.0.1:')
@@ -163,14 +187,14 @@ describe('runDoctor', () => {
 
   it('fails when the hooks point at a checkout that is gone, naming the dead path and the installer', async () => {
     const home = tmp('doctor-home-')
-    const group = (path: string) => [{ matcher: '', hooks: [{ type: 'command', command: `bash "${path}/hooks/agent-tracker.sh"` }] }]
+    const group = (path: string) => [{ matcher: '', hooks: [{ type: 'command', command: `node "${path}/hooks/agent-tracker.mjs"` }] }]
     const events = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop', 'SessionStart', 'SessionEnd',
       'UserPromptSubmit', 'Stop', 'PermissionRequest', 'Notification', 'StopFailure', 'PreCompact', 'PostCompact', 'PostToolBatch', 'CwdChanged', 'PostModelSwitch']
     writeSettings(join(home, '.claude'), { hooks: Object.fromEntries(events.map(e => [e, group('/old/moved/path')])) })
     const r = (await runDoctor(await base(home))) as Report
     const hooks = line(r, 'hooks:')!
     expect(hooks.level).toBe(FAIL)
-    expect(hooks.title).toContain('/old/moved/path/hooks/agent-tracker.sh')
+    expect(hooks.title).toContain('/old/moved/path/hooks/agent-tracker.mjs')
     expect(hooks.notes.join(' ')).toContain(COMMANDS.install)
     expect(r.ok).toBe(false)
   })
@@ -179,8 +203,8 @@ describe('runDoctor', () => {
     const home = tmp('doctor-home-')
     const other = tmp('doctor-other-checkout-')
     mkdirSync(join(other, 'hooks'))
-    writeFileSync(join(other, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
-    const entry = (path: string) => ({ type: 'command', command: `bash "${path}/hooks/agent-tracker.sh"` })
+    writeFileSync(join(other, 'hooks', 'agent-tracker.mjs'), '')
+    const entry = (path: string) => ({ type: 'command', command: `node "${path}/hooks/agent-tracker.mjs"` })
     writeSettings(join(home, '.claude'), {
       hooks: {
         PreToolUse: [{ matcher: '', hooks: [entry(other)] }],
@@ -194,11 +218,23 @@ describe('runDoctor', () => {
     expect(summary.title).toMatch(/^hooks: 2\/19 events run /)
     expect(summary.title).toContain('missing: PostToolUseFailure, SubagentStart')
     expect(foreign.level).toBe(WARN)
-    expect(foreign.title).toContain(`${other}/hooks/agent-tracker.sh is not this checkout's hooks/agent-tracker.sh`)
+    expect(foreign.title).toContain(`${other}/hooks/agent-tracker.mjs is not this checkout's hooks/agent-tracker.mjs`)
     expect(dup.level).toBe(WARN)
     expect(dup.title).toContain('registered twice for PostToolUse')
     expect(line(r, 'status line:')?.level).toBe(WARN)
     expect(r.ok).toBe(true)
+  })
+
+  it('still recognises the bash installer\'s `bash ".../agent-tracker.sh"` entries, and tells the install command repoints them', async () => {
+    const home = tmp('doctor-home-')
+    const group = [{ matcher: '', hooks: [{ type: 'command', command: `bash "${fwd(ROOT)}/hooks/agent-tracker.sh"` }] }]
+    writeSettings(join(home, '.claude'), { hooks: { PreToolUse: group, Stop: group } })
+    const r = (await runDoctor(await base(home))) as Report
+    const [summary, foreign] = lines(r, 'hooks:')
+    expect(summary.title).toMatch(/^hooks: 2\/19 events run /)
+    expect(foreign.level).toBe(WARN)
+    expect(foreign.title).toContain(`${fwd(ROOT)}/hooks/agent-tracker.sh is not this checkout's hooks/agent-tracker.mjs`)
+    expect(foreign.notes.join(' ')).toContain(COMMANDS.install)
   })
 
   it('fails with the install command when nothing is registered and no plugin is enabled', async () => {
@@ -223,14 +259,14 @@ describe('runDoctor', () => {
     const config = join(home, '.claude')
     const copy = join(config, 'plugins', 'cache', 'agent-office', 'agent-office', '1.0.0')
     mkdirSync(join(copy, 'hooks'), { recursive: true })
-    writeFileSync(join(copy, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
+    writeFileSync(join(copy, 'hooks', 'agent-tracker.mjs'), '')
     writeSettings(config, { enabledPlugins: { 'agent-office@agent-office': true } })
 
     const r = (await runDoctor(await base(home))) as Report
     expect(lines(r, 'hooks:')).toHaveLength(0)
     const plugin = line(r, 'plugin agent-office@agent-office')!
     expect(plugin.level).toBe(PASS)
-    expect(plugin.title).toContain(join(copy, 'hooks', 'agent-tracker.sh'))
+    expect(plugin.title).toContain(join(copy, 'hooks', 'agent-tracker.mjs'))
     const status = line(r, 'status line:')!
     expect(status.level).toBe(WARN)
     expect(status.title).toContain('a plugin cannot set statusLine')
@@ -245,9 +281,9 @@ describe('runDoctor', () => {
     const config = join(home, '.claude')
     const copy = join(config, 'plugins', 'cache', 'agent-office', 'agent-office', '1.0.0')
     mkdirSync(join(copy, 'hooks'), { recursive: true })
-    writeFileSync(join(copy, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
+    writeFileSync(join(copy, 'hooks', 'agent-tracker.mjs'), '')
     writeSettings(config, { enabledPlugins: { 'agent-office@agent-office': true } })
-    execFileSync('bash', [INSTALLER, '--status-line-only'], { encoding: 'utf8', env: installerEnv(home) })
+    execFileSync(process.execPath, [INSTALLER, '--status-line-only'], { encoding: 'utf8', env: installerEnv(home) })
 
     const r = (await runDoctor(await base(home))) as Report
     expect(lines(r, 'hooks:')).toHaveLength(0)
@@ -261,8 +297,8 @@ describe('runDoctor', () => {
     const config = join(home, '.claude')
     const copy = join(config, 'plugins', 'cache', 'agent-office', 'agent-office', '1.0.0')
     mkdirSync(join(copy, 'hooks'), { recursive: true })
-    writeFileSync(join(copy, 'hooks', 'agent-tracker.sh'), '#!/bin/bash\n')
-    const settings = JSON.parse(execFileSync('cat', [join(config, 'settings.json')], { encoding: 'utf8' }))
+    writeFileSync(join(copy, 'hooks', 'agent-tracker.mjs'), '')
+    const settings = JSON.parse(readFileSync(join(config, 'settings.json'), 'utf8'))
     writeSettings(config, { ...settings, enabledPlugins: { 'agent-office@agent-office': true } })
 
     const r = (await runDoctor(await base(home))) as Report
@@ -289,13 +325,13 @@ describe('runDoctor', () => {
 
     // Hooks in the config dir itself: fine
     const config2 = tmp('doctor-config-')
-    writeSettings(config2, JSON.parse(execFileSync('cat', [join(home, '.claude', 'settings.json')], { encoding: 'utf8' })))
+    writeSettings(config2, JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')))
     const r2 = (await runDoctor(await base(home, { env: { CLAUDE_CONFIG_DIR: config2 } }))) as Report
     expect(line(r2, 'hooks:')?.level).toBe(PASS)
 
     // Following the remedy works: the installer run with CLAUDE_CONFIG_DIR set writes the file the doctor reads
     const config3 = tmp('doctor-config-')
-    execFileSync('bash', [INSTALLER], { encoding: 'utf8', env: installerEnv(home, { CLAUDE_CONFIG_DIR: config3 }) })
+    execFileSync(process.execPath, [INSTALLER], { encoding: 'utf8', env: installerEnv(home, { CLAUDE_CONFIG_DIR: config3 }) })
     const r3 = (await runDoctor(await base(home, { env: { CLAUDE_CONFIG_DIR: config3 } }))) as Report
     expect(line(r3, 'hooks:')?.level).toBe(PASS)
     expect(line(r3, 'status line:')?.level).toBe(PASS)
@@ -311,7 +347,7 @@ describe('runDoctor', () => {
     expect(r.ok).toBe(false)
   })
 
-  it('token: 0600 passes, looser modes fail with the chmod, absent is a WARN while the server is down', async () => {
+  it.skipIf(isWindows)('token: 0600 passes, looser modes fail with the chmod, absent is a WARN while the server is down', async () => {
     const home = installedHome()
     const officeHome = join(home, '.agent-office')
     const token = join(officeHome, 'auth-token')
@@ -334,19 +370,62 @@ describe('runDoctor', () => {
     expect(line(r, 'token:')?.level).toBe(WARN)
   })
 
-  it('tools: a PATH without python3 fails that line and names why', async () => {
+  it('token on Windows: no mode to check, a PASS that says the user-profile ACL keeps it private; absent is still a WARN', () => {
+    const officeHome = tmp('doctor-office-home-')
+    const token = join(officeHome, 'auth-token')
+    expect(checkToken({ officeHome, serverUp: false, platform: 'win32' }).level).toBe(WARN)
+    writeFileSync(token, 'secret\n')
+    const r = checkToken({ officeHome, serverUp: true, platform: 'win32' })
+    expect(r.level).toBe(PASS)
+    expect(r.title).toContain(token)
+    expect(r.title).toContain('ACL')
+    expect(r.title).not.toContain('0600')
+  })
+
+  it('needs no bash, python3 or curl: a PATH holding none of them still passes, with no line asking for them', () => {
     const home = installedHome()
-    const bin = tmp('doctor-bin-')
-    for (const name of ['bash', 'curl']) {
-      const real = execFileSync('bash', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim()
-      symlinkSync(real, join(bin, name))
+    const bare = tmp('doctor-bin-')
+    const { PATH: _p, Path: _P, ...env } = { ...process.env, HOME: home, USERPROFILE: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), NO_COLOR: '1' } as Record<string, string>
+    const res = spawnSync(process.execPath, [DOCTOR], { encoding: 'utf8', env: { ...env, PATH: bare, AGENT_OFFICE_PORT: '1' } })
+    expect(res.status).toBe(0)
+    expect(res.stdout).toMatch(/^  PASS  hooks: 19\/19 events run /m)
+    expect(res.stdout).not.toMatch(/python3|curl|bash/)
+  })
+
+  describe('a plugin\'s bare `node` on a non-login shell\'s PATH', () => {
+    function pluginHome() {
+      const home = tmp('doctor-home-')
+      const config = join(home, '.claude')
+      const copy = join(config, 'plugins', 'cache', 'agent-office', 'agent-office', '1.0.0')
+      mkdirSync(join(copy, 'hooks'), { recursive: true })
+      writeFileSync(join(copy, 'hooks', 'agent-tracker.mjs'), '')
+      writeSettings(config, { enabledPlugins: { 'agent-office@agent-office': true } })
+      return home
     }
-    const r = (await runDoctor(await base(home, { path: bin }))) as Report
-    expect(line(r, 'bash:')?.level).toBe(PASS)
-    expect(line(r, 'curl:')?.level).toBe(PASS)
-    expect(line(r, 'python3:')?.level).toBe(FAIL)
-    expect(line(r, 'python3:')?.title).toContain('not on PATH')
-    expect(r.ok).toBe(false)
+    const nodeLine = (r: Report) => r.results.find(l => l.title.includes('run bare `node`') || l.title.includes('hooks run bare'))
+
+    it('WARNs on macOS / Linux when no node is found there, and names npm run install-hooks (it writes the absolute node path)', async () => {
+      const r = (await runDoctor(await base(pluginHome(), { platform: 'linux', loginPath: tmp('doctor-login-path-') }))) as Report
+      const warn = nodeLine(r)!
+      expect(warn.level).toBe(WARN)
+      expect(warn.title).toContain('non-login shell')
+      expect(warn.notes.join(' ')).toContain(COMMANDS.install)
+      expect(warn.notes.join(' ')).toContain('absolute path')
+      expect(r.ok).toBe(true)
+    })
+
+    it('is quiet when a node is found there, and on Windows (where node.exe comes from the PATH Claude Code was started with)', async () => {
+      const withNode = tmp('doctor-login-path-')
+      writeFileSync(join(withNode, 'node'), '')
+      chmodSync(join(withNode, 'node'), 0o755)
+      expect(nodeLine((await runDoctor(await base(pluginHome(), { platform: 'linux', loginPath: withNode }))) as Report)).toBeUndefined()
+      expect(nodeLine((await runDoctor(await base(pluginHome(), { platform: 'win32', loginPath: tmp('doctor-login-path-') }))) as Report)).toBeUndefined()
+    })
+
+    it('is not raised for an installer-written hook, which carries the absolute node path itself', async () => {
+      const r = (await runDoctor(await base(installedHome(), { platform: 'linux', loginPath: tmp('doctor-login-path-') }))) as Report
+      expect(nodeLine(r)).toBeUndefined()
+    })
   })
 
   it('dist/: built when dist/index.html exists under the root it is told about', async () => {
@@ -407,7 +486,9 @@ describe('runDoctor against a running server', () => {
     const hooks = line(r, 'hooks reaching the server:')!
     expect(hooks.level).toBe(PASS)
     expect(hooks.title).toMatch(/^hooks reaching the server: 2 since it started, last \d+ s ago$/)
-    expect(line(r, 'token:')).toEqual({ level: PASS, title: `token: ${office.server.TOKEN_FILE} (0600)`, notes: [] })
+    expect(line(r, 'token:')?.level).toBe(PASS)
+    expect(line(r, 'token:')?.title).toContain(office.server.TOKEN_FILE)
+    if (!isWindows) expect(line(r, 'token:')?.title).toBe(`token: ${office.server.TOKEN_FILE} (0600)`)
     // AGENT_OFFICE_UI_DIR is unset, so the server reports whatever this checkout's dist/ holds
     if (office.server.UI_AVAILABLE) expect(line(r, 'server: UI not built')).toBeUndefined()
     else expect(line(r, 'server: UI not built')?.level).toBe(WARN)
@@ -430,7 +511,7 @@ describe('npm run doctor (the script)', () => {
   function run(home: string, extraEnv: Record<string, string> = {}, args: string[] = []) {
     return spawnSync(process.execPath, [DOCTOR, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), NO_COLOR: '1', ...extraEnv },
+      env: { ...process.env, HOME: home, USERPROFILE: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), NO_COLOR: '1', ...extraEnv },
     })
   }
 

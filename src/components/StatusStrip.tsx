@@ -35,7 +35,7 @@ const WARN_MS = Number(import.meta.env.VITE_HOOK_WARN_MS) || HOOK_WARN_MS
 
 const SERVER_URL  = officeHttpBase()
 const START_CMD   = 'npm run server'
-const START_ALT   = 'bash scripts/start-office.sh'
+const START_ALT   = 'node scripts/start-office.mjs'
 const INSTALL_CMD = 'npm run install-hooks'
 const DOCTOR_CMD  = 'npm run doctor'
 const OPEN_CMD    = 'npm run open'

@@ -7,22 +7,25 @@
  *
  *   node         a version the server and better-sqlite3 run on (20+)
  *   hooks        ~/.claude/settings.json — or $CLAUDE_CONFIG_DIR/settings.json —
- *                runs hooks/agent-tracker.sh for every event the installer
+ *                runs hooks/agent-tracker.mjs for every event the installer
  *                registers, from a file that exists. Same rule as
- *                hooks/install-hooks.sh: an entry is ours when a word of its
- *                command is a path ending in hooks/agent-tracker.sh. Or the
+ *                hooks/install-hooks.mjs: an entry is ours when a word of its
+ *                command is a path ending in hooks/agent-tracker.mjs (or the
+ *                bash installer's .sh), whatever interpreter runs it. Or the
  *                agent-office plugin is
  *                installed: enabledPlugins in settings.json plus a copy under
- *                plugins/ (installed_plugins.json, cache/, marketplaces/).
- *   status line  statusLine + subagentStatusLine run hooks/status-line.sh —
+ *                plugins/ (installed_plugins.json, cache/, marketplaces/). On
+ *                macOS / Linux a plugin's hooks run bare `node`: WARN when a
+ *                non-login shell's PATH does not find it.
+ *   status line  statusLine + subagentStatusLine run hooks/status-line.mjs —
  *                the meters; a plugin cannot register statusLine, so plugin
  *                installs are pointed at npm run install-status-line (the
  *                status line alone: the installer's hooks next to the
  *                plugin's would deliver every event twice)
- *   tools        python3, bash, curl on PATH (the hook and the installer use them)
  *   server       GET http://127.0.0.1:$AGENT_OFFICE_PORT/health answers, and
  *                whether a hook has reached it since it started
- *   token        $AGENT_OFFICE_HOME/auth-token exists and is mode 0600
+ *   token        $AGENT_OFFICE_HOME/auth-token exists and is mode 0600 (not
+ *                checked on Windows: the user-profile ACL keeps it private)
  *   dist         the UI is built (npm run build); else Vite on :3333 is the way in
  *
  * `runDoctor(opts)` is exported and returns the results without printing, so
@@ -30,14 +33,18 @@
  * spawn the script for its exit code. `--json` prints the results as JSON.
  */
 
-import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, delimiter, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { LOGIN_PATH, scriptPathIn, shellWords, which } from '../hooks/install-hooks.mjs'
+
+// The installer's own rule for what is ours (command splitting, either script form, any interpreter)
+export { scriptPathIn, shellWords, which }
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const TRACKER_NAME = 'agent-tracker.sh'
-const STATUS_NAME = 'status-line.sh'
+const TRACKER_NAME = 'agent-tracker.mjs'
+const STATUS_NAME = 'status-line.mjs'
 // better-sqlite3 12 (package.json) ships builds for Node 20.x and up
 export const MIN_NODE_MAJOR = 20
 export const DEFAULT_PORT = 3334
@@ -49,14 +56,14 @@ export const FAIL = 'FAIL'
 
 export const COMMANDS = {
   install:   'npm run install-hooks',
-  hooksOnly: 'bash hooks/install-hooks.sh --no-status-line',
+  hooksOnly: 'node hooks/install-hooks.mjs --no-status-line',
   statusLine: 'npm run install-status-line',
   uninstall: 'npm run uninstall-hooks',
   uninstallHooks: 'npm run uninstall-hooks -- --no-status-line',
   plugin:    'claude plugin marketplace add W17ant/Claude-Office && claude plugin install agent-office@agent-office',
   unplugin:  'claude plugin uninstall agent-office@agent-office',
   start:     'npm run build && npm run server',
-  startAlt:  'bash scripts/start-office.sh',
+  startAlt:  'node scripts/start-office.mjs',
   dev:       'npm run dev',
 }
 
@@ -76,53 +83,11 @@ function readJson(path) {
   }
 }
 
-/** Split a shell command into words, honouring quotes and backslashes (enough for a hook command). */
-export function shellWords(command) {
-  const words = []
-  let cur = ''
-  let quote = null
-  let has = false
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i]
-    if (quote) {
-      if (ch === quote) quote = null
-      else if (ch === '\\' && quote === '"' && i + 1 < command.length) cur += command[++i]
-      else cur += ch
-    } else if (ch === '"' || ch === "'") {
-      quote = ch
-      has = true
-    } else if (ch === '\\' && i + 1 < command.length) {
-      cur += command[++i]
-      has = true
-    } else if (/\s/.test(ch)) {
-      if (has || cur) words.push(cur)
-      cur = ''
-      has = false
-    } else {
-      cur += ch
-      has = true
-    }
-  }
-  if (has || cur) words.push(cur)
-  return words
-}
-
-/**
- * The path a hook command runs that ends in hooks/`name` (the layout of every
- * checkout and of the plugin), or null when the command is not ours — the
- * installer's own rule (its `script_path`). Containing the name is not
- * enough: my-status-line.sh or ~/.claude/status-line.sh is someone else's.
- */
-export function scriptPathIn(command, name) {
-  if (typeof command !== 'string' || !command.includes(name)) return null
-  return shellWords(command).find(w => basename(w) === name && basename(dirname(w)) === 'hooks') ?? null
-}
-
-/** ~ and $HOME as a shell would expand them in a hook command */
+/** ~ and $HOME as a shell would expand them in a hook command (~\ too, for a Windows path) */
 function expandHome(p, home) {
   if (p === '~') return home
-  if (p.startsWith('~/')) return join(home, p.slice(2))
-  return p.replace(/^\$\{?HOME\}?(?=\/|$)/, home)
+  if (p.startsWith('~/') || p.startsWith('~\\')) return join(home, p.slice(2))
+  return p.replace(/^\$\{?HOME\}?(?=[\\/]|$)/, home)
 }
 
 function samePath(a, b) {
@@ -131,19 +96,6 @@ function samePath(a, b) {
   } catch {
     return resolve(a) === resolve(b)
   }
-}
-
-/** First executable `name` on PATH, or null. */
-export function which(name, path = process.env.PATH ?? '') {
-  for (const dir of path.split(delimiter)) {
-    if (!dir) continue
-    const candidate = join(dir, name)
-    try {
-      accessSync(candidate, constants.X_OK)
-      if (statSync(candidate).isFile()) return candidate
-    } catch {}
-  }
-  return null
 }
 
 export function formatSpan(ms) {
@@ -217,8 +169,9 @@ export function inspectPlugin(settings, configDir) {
 
   const copies = []
   const consider = (dir, source) => {
-    const tracker = join(dir, 'hooks', TRACKER_NAME)
-    if (existsSync(tracker)) copies.push({ dir, tracker, source })
+    // A plugin copy from before the Node port has hooks/agent-tracker.sh only
+    const tracker = [TRACKER_NAME, 'agent-tracker.sh'].map(name => join(dir, 'hooks', name)).find(existsSync)
+    if (tracker) copies.push({ dir, tracker, source })
   }
   const pluginsDir = join(configDir, 'plugins')
 
@@ -261,7 +214,7 @@ function safeReaddir(dir) {
 }
 
 /** The hook lines: settings.json hooks and/or the plugin. */
-export function checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback }) {
+export function checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform = process.platform, loginPath = LOGIN_PATH }) {
   const out = []
   const hooks = inspectHooks(settings, { events, tracker, home })
   const plugin = inspectPlugin(settings, configDir)
@@ -297,6 +250,11 @@ export function checkHooks({ settingsPath, settings, settingsState, events, trac
         `keep one: ${COMMANDS.uninstallHooks} takes the installer's hooks out and keeps the status line (the meters), or ${COMMANDS.unplugin}`))
     } else {
       out.push(result(PASS, `plugin ${plugin.enabledKey}: enabled, hooks run ${copy.tracker}`))
+    }
+    // The plugin's hooks.json runs bare `node`; a shell without the login PATH (nvm, a GUI-launched Claude Code) may not find it
+    if (platform !== 'win32' && !which('node', loginPath)) {
+      out.push(result(WARN, `plugin ${plugin.enabledKey}: its hooks run bare \`node\`, which a non-login shell's PATH (${loginPath}) does not find — Claude Code started from a GUI, or with node only from nvm, reports a hook error on every event`,
+        `${COMMANDS.install} writes the absolute path of this node into the hooks instead (then ${COMMANDS.unplugin}, or every agent arrives twice), or put node on that PATH, e.g. ln -s "${process.execPath}" /usr/local/bin/node`))
     }
   } else if (plugin.enabledKey) {
     out.push(result(hooks.any ? WARN : FAIL, `plugin ${plugin.enabledKey} is enabled in ${settingsPath} but no installed copy was found under ${join(configDir, 'plugins')}`,
@@ -348,14 +306,6 @@ export function checkStatusLine({ settings, statusScript, home, pluginOnly }) {
     main.other ? `${COMMANDS.install} adds it and chains the one you have (${main.other})` : `${COMMANDS.install} adds it`)
 }
 
-export function checkTools(names = ['python3', 'bash', 'curl'], path = process.env.PATH) {
-  const why = { python3: 'the hook parses every event with it, and the installer merges settings.json with it', bash: 'every hook command is `bash .../agent-tracker.sh`', curl: 'the hook POSTs to the server with it' }
-  return names.map(name => {
-    const found = which(name, path)
-    return found ? result(PASS, `${name}: ${found}`) : result(FAIL, `${name}: not on PATH — ${why[name] ?? 'needed'}`)
-  })
-}
-
 /** GET /health: is the server up, has it seen hooks. */
 export async function checkServer({ port = DEFAULT_PORT, fetchImpl = globalThis.fetch, timeoutMs = 2000, now = Date.now() } = {}) {
   const url = `http://127.0.0.1:${port}/health`
@@ -392,13 +342,15 @@ export async function checkServer({ port = DEFAULT_PORT, fetchImpl = globalThis.
   return { results: out, up: true, body }
 }
 
-export function checkToken({ officeHome, serverUp }) {
+export function checkToken({ officeHome, serverUp, platform = process.platform }) {
   const file = join(officeHome, 'auth-token')
   if (!existsSync(file)) {
     return serverUp
       ? result(FAIL, `token: ${file} is missing although the server is up — hooks cannot authenticate`, 'is the server running with another AGENT_OFFICE_HOME? set the same one for the hook, or restart it from here')
       : result(WARN, `token: ${file} not written yet — the server writes it when it starts`)
   }
+  // Windows has no POSIX modes: the file is private through the ACL of the user profile it sits in
+  if (platform === 'win32') return result(PASS, `token: ${file} (Windows: no file mode to check, the user-profile ACL keeps it private)`)
   let mode
   try {
     mode = statSync(file).mode & 0o777
@@ -423,11 +375,13 @@ export function checkDist({ root, port = DEFAULT_PORT }) {
 
 /**
  * Run every check. Options override the environment (tests): home, configDir,
- * officeHome, port, root, path, fetchImpl, nodeVersion.
+ * officeHome, port, root, platform, loginPath, fetchImpl, nodeVersion.
  */
 export async function runDoctor(opts = {}) {
   const env = opts.env ?? process.env
-  const home = opts.home ?? env.HOME ?? homedir()
+  const platform = opts.platform ?? process.platform
+  // Windows: the profile directory, as the hook and the server resolve it (HOME may be an MSYS path there)
+  const home = opts.home ?? (platform === 'win32' ? env.USERPROFILE : env.HOME) ?? homedir()
   const defaultConfigDir = join(home, '.claude')
   const configDir = opts.configDir ?? (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : defaultConfigDir)
   const officeHome = opts.officeHome ?? env.AGENT_OFFICE_HOME ?? join(home, '.agent-office')
@@ -450,13 +404,12 @@ export async function runDoctor(opts = {}) {
 
   const results = []
   results.push(checkNode(opts.nodeVersion))
-  const hooks = checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback })
+  const hooks = checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform, loginPath: opts.loginPath })
   results.push(...hooks.results)
   results.push(checkStatusLine({ settings, statusScript, home, pluginOnly: hooks.plugin.found && !hooks.hooks.any }))
-  results.push(...checkTools(undefined, opts.path ?? env.PATH))
   const server = await checkServer({ port, fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs })
   results.push(...server.results)
-  results.push(checkToken({ officeHome, serverUp: server.up }))
+  results.push(checkToken({ officeHome, serverUp: server.up, platform }))
   results.push(checkDist({ root, port }))
 
   return {
@@ -508,7 +461,7 @@ function isMainModule() {
 if (isMainModule()) {
   const args = new Set(process.argv.slice(2))
   if (args.has('-h') || args.has('--help')) {
-    console.log('Usage: npm run doctor [-- --json] [--no-color]\n  Checks node, hooks (or the plugin), the status line, python3/bash/curl, the server, the auth token and the build; exit 1 on any FAIL.')
+    console.log('Usage: npm run doctor [-- --json] [--no-color]\n  Checks node, hooks (or the plugin), the status line, the server, the auth token and the build; exit 1 on any FAIL.')
     process.exit(0)
   }
   const report = await runDoctor()

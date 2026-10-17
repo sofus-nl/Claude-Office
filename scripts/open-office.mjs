@@ -25,7 +25,7 @@
  * 3333) and AGENT_OFFICE_HOME (default ~/.agent-office).
  *
  *   --dev    the Vite dev server's page (http://localhost:<UI port>/), the
- *            one start-office.sh runs; also used when the server says its
+ *            one start-office.mjs runs; also used when the server says its
  *            UI is not built
  *   --print  print the link, open nothing
  *
@@ -87,7 +87,8 @@ function runOpener(command, args, env, graceMs = 3000) {
       return
     }
     child.once('error', () => done(false))
-    child.once('exit', code => done(code === 0))
+    // explorer.exe exits 1 even when it opened the target
+    child.once('exit', code => done(code === 0 || command === 'explorer.exe'))
     setTimeout(() => { child.unref(); done(true) }, graceMs).unref()
   })
 }
@@ -105,7 +106,7 @@ export async function openOffice({ env = process.env, platform = process.platfor
   const token = readOfficeToken(tokenFile)
   if (!token) {
     err.write(`No office token in ${tokenFile}: the server writes it when it starts.\n`)
-    err.write('Start the office first (npm run server, bash scripts/start-office.sh or the desktop app), then run npm run open again.\n')
+    err.write('Start the office first (npm run server, node scripts/start-office.mjs or the desktop app), then run npm run open again.\n')
     return 1
   }
 
@@ -123,7 +124,7 @@ export async function openOffice({ env = process.env, platform = process.platfor
   const link = officeLink(base, token)
   out.write(`Agent Office: ${link}\n`)
   if (!status) {
-    err.write(`The office server is not answering on port ${port}. Start it (npm run server or bash scripts/start-office.sh); the link works once it is up — the token stays the same across restarts.\n`)
+    err.write(`The office server is not answering on port ${port}. Start it (npm run server or node scripts/start-office.mjs); the link works once it is up — the token stays the same across restarts.\n`)
     return 1
   }
   if (print) return 0

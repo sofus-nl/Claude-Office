@@ -62,7 +62,7 @@ function serverUrls(port = DEFAULT_SERVER_PORT, uiPort = VITE_DEV_PORT) {
 // Reusing a server that is already on the port
 //
 // The app first asks GET /health whether an office server already answers on
-// its port (one started with start-office.sh, `npm run server`, another copy
+// its port (one started with start-office.mjs, `npm run server`, another copy
 // of the app). The packaged window loads the page from that server, so a
 // server with no built UI — a checkout run with the Vite dev server, which
 // answers GET / with a 404 JSON body — is no use to it, and spawning a second
@@ -106,7 +106,7 @@ function serverPlan(found, packaged) {
 /** The dialog for a 'conflict': what is on the port and the ways out. */
 function serverConflictMessage(port) {
   return `Another Agent Office server is already running on port ${port}, but it has no built office page to show ` +
-    '(a checkout started with start-office.sh or `npm run dev:all`, say).\n\n' +
+    '(a checkout started with start-office.mjs or `npm run dev:all`, say).\n\n' +
     `Stop that server, or run \`npm run build\` in its checkout, or launch ${APP_NAME} with AGENT_OFFICE_PORT set to a free port.`
 }
 

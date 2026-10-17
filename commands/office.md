@@ -1,6 +1,6 @@
 ---
 description: Check whether the Agent Office server is up and show how to start it
-allowed-tools: Bash(curl -s -m 2 http://127.0.0.1:3334/health:*)
+allowed-tools: Bash(node -e "fetch('http://127.0.0.1:3334/health':*), PowerShell(node -e "fetch('http://127.0.0.1:3334/health':*)
 disable-model-invocation: true
 ---
 
@@ -9,7 +9,7 @@ disable-model-invocation: true
 Health of the office server (`GET http://127.0.0.1:3334/health`; empty when nothing is listening):
 
 ```
-!`curl -s -m 2 http://127.0.0.1:3334/health`
+!`node -e "fetch('http://127.0.0.1:3334/health',{signal:AbortSignal.timeout(2000)}).then(r=>r.text()).then(console.log,()=>{})"`
 ```
 
 Tell the user whether the office is up, in one or two lines.

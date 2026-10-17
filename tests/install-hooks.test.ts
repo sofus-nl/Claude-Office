@@ -1,20 +1,27 @@
 /**
- * hooks/install-hooks.sh — registers agent-tracker.sh in ~/.claude/settings.json,
- * repoints entries left behind by a checkout that moved, and takes it all back out with --uninstall.
- * Runs the real script with HOME (and AGENT_OFFICE_HOME, and CLAUDE_CONFIG_DIR when a
- * test sets it) pointed at temp dirs; a CLAUDE_CONFIG_DIR in the developer's own
- * environment is dropped, so the installer can never reach their real config.
+ * hooks/install-hooks.mjs — registers agent-tracker.mjs in ~/.claude/settings.json,
+ * repoints entries left behind by a checkout that moved (or by the bash installer),
+ * and takes it all back out with --uninstall.
+ * Runs the real script with HOME and USERPROFILE (os.homedir() reads the second on
+ * Windows), AGENT_OFFICE_HOME, and CLAUDE_CONFIG_DIR when a test sets it, pointed at
+ * temp dirs; a CLAUDE_CONFIG_DIR in the developer's own environment is dropped, so
+ * the installer can never reach their real config.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { EVENTS as INSTALLER_EVENTS, nodeCommand, scriptPathIn, shellWords } from '../hooks/install-hooks.mjs'
 
-const INSTALLER = fileURLToPath(new URL('../hooks/install-hooks.sh', import.meta.url))
-const TRACKER_SCRIPT = fileURLToPath(new URL('../hooks/agent-tracker.sh', import.meta.url))
+const INSTALLER = fileURLToPath(new URL('../hooks/install-hooks.mjs', import.meta.url))
+const TRACKER_SCRIPT = fileURLToPath(new URL('../hooks/agent-tracker.mjs', import.meta.url))
+/** The installer writes paths with forward slashes (Git Bash and PowerShell both take them) */
+const fwd = (p: string) => p.replace(/\\/g, '/')
+/** The same checkout's hooks as the bash installer wrote them: the form that gets migrated */
+const BASH_TRACKER = `bash "${fwd(TRACKER_SCRIPT.replace(/agent-tracker\.mjs$/, 'agent-tracker.sh'))}"`
 /** Every event the installer registers: workers, sessions, and the main thread's turn (prompt, reply, needs-you, errors, compaction). */
 const EVENTS = [
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop',
@@ -30,7 +37,8 @@ const TURN_EVENTS = [
 ] as const
 /** The ones added for the task board (F09); an install from before it lacks these two. */
 const TASK_EVENTS = ['TaskCreated', 'TaskCompleted'] as const
-const TRACKER_COMMAND = /^bash ".*\/hooks\/agent-tracker\.sh"$/
+/** `node` (or the absolute path of the running node, quoted) and the quoted script */
+const TRACKER_COMMAND = /^(?:node|"[^"]+") ".*\/hooks\/agent-tracker\.mjs"$/
 /** What the installer writes for an event when nothing of ours was there */
 const OUR_GROUP = { matcher: '', hooks: [{ type: 'command', command: expect.stringMatching(TRACKER_COMMAND) }] }
 /** A tracker hook as a user might have written it by hand for a checkout that is gone */
@@ -50,30 +58,31 @@ function freshHome() {
 /** The installer's environment: temp HOME and AGENT_OFFICE_HOME, never the caller's CLAUDE_CONFIG_DIR */
 function installerEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const { CLAUDE_CONFIG_DIR: _ignored, ...env } = process.env
-  return { ...env, HOME: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), ...extra }
+  return { ...env, HOME: home, USERPROFILE: home, AGENT_OFFICE_HOME: join(home, '.agent-office'), ...extra }
 }
 
-function runInstaller(home: string) {
-  return execFileSync('bash', [INSTALLER], { encoding: 'utf8', env: installerEnv(home) })
+/** The installer, run by the node running this test (never bash, never the npm script) */
+function runInstaller(home: string, args: string[] = []) {
+  return execFileSync(process.execPath, [INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home) })
 }
 
 /** Runs the installer without throwing on a non-zero exit: { status, stdout, stderr, out (both) } */
-function runRaw(home: string, args: string[] = [], extra: Record<string, string> = {}) {
-  const res = spawnSync('bash', [INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home, extra) })
+function runRaw(home: string, args: string[] = [], extra: Record<string, string> = {}, nodeArgs: string[] = []) {
+  const res = spawnSync(process.execPath, [...nodeArgs, INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home, extra) })
   return { status: res.status, stdout: res.stdout, stderr: res.stderr, out: res.stdout + res.stderr }
 }
 
 const settingsPath = (home: string) => join(home, '.claude', 'settings.json')
 const readSettings = (home: string) => JSON.parse(readFileSync(settingsPath(home), 'utf8'))
 
-/** Hook groups for an event that run agent-tracker.sh */
+/** Hook groups for an event that run agent-tracker */
 function trackerGroups(settings: any, event: string) {
   return (settings.hooks?.[event] ?? []).filter((g: any) =>
-    (g.hooks ?? []).some((h: any) => typeof h.command === 'string' && h.command.includes('agent-tracker.sh')),
+    (g.hooks ?? []).some((h: any) => typeof h.command === 'string' && /agent-tracker\.(sh|mjs)/.test(h.command)),
   )
 }
 
-describe('install-hooks.sh', () => {
+describe('install-hooks.mjs', () => {
   it('creates settings.json with all 19 events (workers, sessions, the main thread\'s turn, the task list) on a fresh HOME', () => {
     const home = freshHome()
     const out = runInstaller(home)
@@ -127,7 +136,7 @@ describe('install-hooks.sh', () => {
     const newer: readonly string[] = [...TURN_EVENTS, ...TASK_EVENTS]
     const older = EVENTS.filter(e => !newer.includes(e))
     const settings: any = { hooks: {} }
-    for (const event of older) settings.hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `bash "${TRACKER_SCRIPT}"` }] }]
+    for (const event of older) settings.hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `node "${fwd(TRACKER_SCRIPT)}"` }] }]
     writeFileSync(settingsPath(home), JSON.stringify(settings, null, 2))
 
     const out = runInstaller(home)
@@ -150,7 +159,7 @@ describe('install-hooks.sh', () => {
     const older = EVENTS.filter(e => !(TASK_EVENTS as readonly string[]).includes(e))
     expect(older).toHaveLength(17)
     const settings: any = { hooks: {} }
-    for (const event of older) settings.hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `bash "${TRACKER_SCRIPT}"` }] }]
+    for (const event of older) settings.hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `node "${fwd(TRACKER_SCRIPT)}"` }] }]
     writeFileSync(settingsPath(home), JSON.stringify(settings, null, 2))
 
     const out = runInstaller(home)
@@ -205,7 +214,7 @@ describe('install-hooks.sh', () => {
   it('leaves an entry that already points at this checkout alone, however it was quoted', () => {
     const home = freshHome()
     mkdirSync(join(home, '.claude'), { recursive: true })
-    const mine = { matcher: '', hooks: [{ type: 'command', command: `bash ${TRACKER_SCRIPT}` }] }
+    const mine = { matcher: '', hooks: [{ type: 'command', command: `node ${fwd(TRACKER_SCRIPT)}` }] }
     writeFileSync(settingsPath(home), JSON.stringify({ hooks: { PreToolUse: [mine] } }))
 
     const out = runInstaller(home)
@@ -251,7 +260,7 @@ describe('install-hooks.sh', () => {
   })
 })
 
-describe('install-hooks.sh: shapes Claude Code would reject do not crash the merge', () => {
+describe('install-hooks.mjs: shapes Claude Code would reject do not crash the merge', () => {
   it.each([
     ['an empty array', []],
     ['null', null],
@@ -297,13 +306,11 @@ describe('install-hooks.sh: shapes Claude Code would reject do not crash the mer
   })
 })
 
-describe('install-hooks.sh: status line (payroll / electricity / memory)', () => {
-  const STATUS_COMMAND = /^bash ".*\/hooks\/status-line\.sh"$/
-  const SUBAGENT_COMMAND = /^bash ".*\/hooks\/status-line\.sh" --subagents$/
+describe('install-hooks.mjs: status line (payroll / electricity / memory)', () => {
+  const STATUS_COMMAND = /^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs"$/
+  const SUBAGENT_COMMAND = /^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs" --subagents$/
 
-  function runWith(home: string, args: string[] = []) {
-    return execFileSync('bash', [INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home) })
-  }
+  const runWith = runInstaller
 
   it('registers statusLine (padding 0) and subagentStatusLine next to the hooks on a fresh HOME', () => {
     const home = freshHome()
@@ -332,6 +339,11 @@ describe('install-hooks.sh: status line (payroll / electricity / memory)', () =>
     expect(settings.subagentStatusLine).toEqual({ type: 'command', command: expect.stringMatching(SUBAGENT_COMMAND) })
     expect(readFileSync(join(home, '.agent-office', 'statusline-prev'), 'utf8')).toBe('~/.claude/statusline.sh\n')
     expect(readFileSync(join(home, '.agent-office', 'subagent-statusline-prev'), 'utf8')).toBe('jq -c \'.tasks[] | {id, content: .label}\'\n')
+    // The saved commands are private (Windows has no modes: the user-profile ACL does that)
+    if (process.platform !== 'win32') {
+      expect(statSync(join(home, '.agent-office', 'statusline-prev')).mode & 0o777).toBe(0o600)
+      expect(statSync(join(home, '.agent-office', 'subagent-statusline-prev')).mode & 0o777).toBe(0o600)
+    }
     expect(out).toContain('[wrap] statusLine')
     expect(out).toContain('~/.claude/statusline.sh')
     expect(out).toContain('[wrap] subagentStatusLine')
@@ -341,7 +353,7 @@ describe('install-hooks.sh: status line (payroll / electricity / memory)', () =>
     const home = freshHome()
     mkdirSync(join(home, '.claude'), { recursive: true })
     mkdirSync(join(home, '.agent-office'), { recursive: true })
-    // An earlier install wrapped the user's own status line; its command is what status-line.sh chains
+    // An earlier install wrapped the user's own status line; its command is what status-line chains
     writeFileSync(join(home, '.agent-office', 'statusline-prev'), '~/.claude/statusline.sh\n')
     writeFileSync(settingsPath(home), JSON.stringify({
       statusLine: { type: 'command', command: 'bash /old/checkout/hooks/status-line.sh', padding: 2, refreshInterval: 5 },
@@ -369,11 +381,11 @@ describe('install-hooks.sh: status line (payroll / electricity / memory)', () =>
   it('recognises the office status line by path, not by spelling: an unquoted command for this checkout is left alone', () => {
     const home = freshHome()
     mkdirSync(join(home, '.claude'), { recursive: true })
-    const statusScript = INSTALLER.replace(/install-hooks\.sh$/, 'status-line.sh')
-    writeFileSync(settingsPath(home), JSON.stringify({ statusLine: { type: 'command', command: `bash ${statusScript}`, padding: 0 } }))
+    const statusScript = fwd(INSTALLER.replace(/install-hooks\.mjs$/, 'status-line.mjs'))
+    writeFileSync(settingsPath(home), JSON.stringify({ statusLine: { type: 'command', command: `node ${statusScript}`, padding: 0 } }))
 
     const out = runWith(home)
-    expect(readSettings(home).statusLine).toEqual({ type: 'command', command: `bash ${statusScript}`, padding: 0 })
+    expect(readSettings(home).statusLine).toEqual({ type: 'command', command: `node ${statusScript}`, padding: 0 })
     expect(out).toContain('[skip] statusLine already registered')
   })
 
@@ -389,9 +401,9 @@ describe('install-hooks.sh: status line (payroll / electricity / memory)', () =>
   })
 })
 
-describe('install-hooks.sh --uninstall', () => {
-  const install = (home: string, args: string[] = []) => execFileSync('bash', [INSTALLER, ...args], { encoding: 'utf8', env: installerEnv(home) })
-  const uninstall = (home: string, args: string[] = []) => execFileSync('bash', [INSTALLER, '--uninstall', ...args], { encoding: 'utf8', env: installerEnv(home) })
+describe('install-hooks.mjs --uninstall', () => {
+  const install = (home: string, args: string[] = []) => runInstaller(home, args)
+  const uninstall = (home: string, args: string[] = []) => runInstaller(home, ['--uninstall', ...args])
   /** Writes settings.json the way the installer does (two-space indent, trailing newline), so a put-back file can be compared byte for byte */
   function writeSettings(home: string, settings: unknown) {
     mkdirSync(join(home, '.claude'), { recursive: true })
@@ -494,8 +506,8 @@ describe('install-hooks.sh --uninstall', () => {
 
     const out = uninstall(home)
     const settings = readSettings(home)
-    expect(readText(home)).not.toContain('agent-tracker.sh')
-    expect(readText(home)).not.toContain('status-line.sh')
+    expect(readText(home)).not.toMatch(/agent-tracker\.(sh|mjs)/)
+    expect(readText(home)).not.toMatch(/status-line\.(sh|mjs)/)
     expect(settings.hooks).toEqual({
       PreToolUse: [foreign],
       PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'echo first' }] }],
@@ -586,7 +598,7 @@ describe('install-hooks.sh --uninstall', () => {
   })
 })
 
-describe('install-hooks.sh: a settings file that is not valid JSON is refused, never replaced', () => {
+describe('install-hooks.mjs: a settings file that is not valid JSON is refused, never replaced', () => {
   const backups = (dir: string) => readdirSync(dir).filter(f => f.startsWith('settings.json.backup.'))
   /** One trailing comma: everything else in it is the user's and must survive */
   const BROKEN = '{"permissions": {"allow": ["Bash(npm:*)"]}, "model": "opus", "env": {"FOO": "1"},}'
@@ -625,7 +637,7 @@ describe('install-hooks.sh: a settings file that is not valid JSON is refused, n
   })
 })
 
-describe('install-hooks.sh: only hooks/agent-tracker.sh and hooks/status-line.sh are the office\'s', () => {
+describe('install-hooks.mjs: only hooks/agent-tracker and hooks/status-line (.sh or .mjs) are the office\'s', () => {
   const lookalikeHook = { matcher: '', hooks: [{ type: 'command', command: 'bash ~/bin/my-agent-tracker.sh --log /tmp/x' }] }
   const writeJson = (home: string, settings: unknown) => {
     mkdirSync(join(home, '.claude'), { recursive: true })
@@ -646,15 +658,15 @@ describe('install-hooks.sh: only hooks/agent-tracker.sh and hooks/status-line.sh
     const settings = readSettings(home)
     expect(out).toContain('[wrap] statusLine')
     expect(out).not.toContain('[update] statusLine')
-    expect(settings.statusLine).toEqual({ type: 'command', command: expect.stringMatching(/^bash ".*\/hooks\/status-line\.sh"$/), padding: 2 })
+    expect(settings.statusLine).toEqual({ type: 'command', command: expect.stringMatching(/^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs"$/), padding: 2 })
     expect(readFileSync(join(home, '.agent-office', 'statusline-prev'), 'utf8')).toBe(`${command}\n`)
 
-    const removed = execFileSync('bash', [INSTALLER, '--uninstall'], { encoding: 'utf8', env: installerEnv(home) })
+    const removed = runInstaller(home, ['--uninstall'])
     expect(removed).toContain(`[restore] statusLine: ${command}`)
     expect(readFileSync(settingsPath(home), 'utf8')).toBe(before)
   })
 
-  it('leaves a foreign hook whose command only contains agent-tracker.sh alone, and adds the office entry next to it', () => {
+  it('leaves a foreign hook whose command only contains agent-tracker alone, and adds the office entry next to it', () => {
     const home = freshHome()
     writeJson(home, { hooks: { PreToolUse: [lookalikeHook] } })
 
@@ -676,7 +688,7 @@ describe('install-hooks.sh: only hooks/agent-tracker.sh and hooks/status-line.sh
       subagentStatusLine: { type: 'command', command: 'bash ~/.claude/status-line.sh --subagents' },
     })
 
-    const out = execFileSync('bash', [INSTALLER, '--uninstall'], { encoding: 'utf8', env: installerEnv(home) })
+    const out = runInstaller(home, ['--uninstall'])
     expect(out).toMatch(/nothing to remove/i)
     expect(out).not.toContain('[remove]')
     expect(readFileSync(settingsPath(home), 'utf8')).toBe(before)
@@ -684,7 +696,7 @@ describe('install-hooks.sh: only hooks/agent-tracker.sh and hooks/status-line.sh
   })
 })
 
-describe('install-hooks.sh --status-line-only (the meters next to the plugin)', () => {
+describe('install-hooks.mjs --status-line-only (the meters next to the plugin)', () => {
   const PLUGIN_SETTINGS = { enabledPlugins: { 'agent-office@agent-office': true } }
   const withPlugin = (home: string) => {
     mkdirSync(join(home, '.claude'), { recursive: true })
@@ -694,12 +706,12 @@ describe('install-hooks.sh --status-line-only (the meters next to the plugin)', 
   it('registers statusLine and subagentStatusLine and no hooks at all', () => {
     const home = freshHome()
     withPlugin(home)
-    const out = execFileSync('bash', [INSTALLER, '--status-line-only'], { encoding: 'utf8', env: installerEnv(home) })
+    const out = runInstaller(home, ['--status-line-only'])
     const settings = readSettings(home)
     expect(settings).not.toHaveProperty('hooks')
     expect(settings.enabledPlugins).toEqual(PLUGIN_SETTINGS.enabledPlugins)
-    expect(settings.statusLine).toEqual({ type: 'command', command: expect.stringMatching(/^bash ".*\/hooks\/status-line\.sh"$/), padding: 0 })
-    expect(settings.subagentStatusLine).toEqual({ type: 'command', command: expect.stringMatching(/^bash ".*\/hooks\/status-line\.sh" --subagents$/) })
+    expect(settings.statusLine).toEqual({ type: 'command', command: expect.stringMatching(/^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs"$/), padding: 0 })
+    expect(settings.subagentStatusLine).toEqual({ type: 'command', command: expect.stringMatching(/^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs" --subagents$/) })
     for (const event of EVENTS) expect(out).not.toContain(`[add]  ${event}`)
     expect(out).toContain('[skip]')
     expect(out).toContain('--status-line-only')
@@ -707,13 +719,13 @@ describe('install-hooks.sh --status-line-only (the meters next to the plugin)', 
 
     // A re-run changes nothing
     const before = readFileSync(settingsPath(home))
-    execFileSync('bash', [INSTALLER, '--status-line-only'], { encoding: 'utf8', env: installerEnv(home) })
+    runInstaller(home, ['--status-line-only'])
     expect(readFileSync(settingsPath(home)).equals(before)).toBe(true)
   })
 
   it('is what `npm run install-status-line` runs', () => {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
-    expect(pkg.scripts['install-status-line']).toBe('bash hooks/install-hooks.sh --status-line-only')
+    expect(pkg.scripts['install-status-line']).toBe('node hooks/install-hooks.mjs --status-line-only')
   })
 
   it('a plain install with the plugin enabled still installs, but warns that every event would arrive twice and names the fix', () => {
@@ -730,7 +742,7 @@ describe('install-hooks.sh --status-line-only (the meters next to the plugin)', 
   it('--uninstall --status-line-only takes the status line out and leaves the hooks', () => {
     const home = freshHome()
     runInstaller(home)
-    const out = execFileSync('bash', [INSTALLER, '--uninstall', '--status-line-only'], { encoding: 'utf8', env: installerEnv(home) })
+    const out = runInstaller(home, ['--uninstall', '--status-line-only'])
     const settings = readSettings(home)
     expect(Object.keys(settings.hooks)).toHaveLength(EVENTS.length)
     expect(settings).not.toHaveProperty('statusLine')
@@ -748,7 +760,7 @@ describe('install-hooks.sh --status-line-only (the meters next to the plugin)', 
   })
 })
 
-describe('install-hooks.sh: CLAUDE_CONFIG_DIR', () => {
+describe('install-hooks.mjs: CLAUDE_CONFIG_DIR', () => {
   it('install and --uninstall both use $CLAUDE_CONFIG_DIR/settings.json, the file Claude Code reads, and never create ~/.claude', () => {
     const home = freshHome()
     const config = join(home, 'elsewhere', 'claude-config')
@@ -779,28 +791,26 @@ describe('install-hooks.sh: CLAUDE_CONFIG_DIR', () => {
   })
 })
 
-describe('install-hooks.sh: backups', () => {
-  /** A `date` that always answers the same second, so several runs land in it */
-  function frozenClock(home: string) {
-    const bin = join(home, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(join(bin, 'date'), '#!/bin/sh\necho 20261015_120000\n')
-    chmodSync(join(bin, 'date'), 0o755)
-    return { PATH: `${bin}:${process.env.PATH}` }
-  }
+describe('install-hooks.mjs: backups', () => {
+  /** `new Date()` and Date.now() always answer 2026-10-15 12:00:00 local, so several runs land in the same second */
+  const FROZEN = [
+    'const Real = Date, fixed = new Real(2026, 9, 15, 12, 0, 0).getTime()',
+    'globalThis.Date = class extends Real { constructor(...a) { a.length ? super(...a) : super(fixed) } static now() { return fixed } }',
+  ].join(';')
+  const frozenClock = () => [`--import=data:text/javascript,${encodeURIComponent(FROZEN)}`]
   const dir = (home: string) => join(home, '.claude')
   const backupsIn = (home: string) => readdirSync(dir(home)).filter(f => f.startsWith('settings.json.backup.')).sort()
 
   it('runs in the same second each keep their own backup, and the first one still holds the original', () => {
     const home = freshHome()
-    const clock = frozenClock(home)
+    const clock = frozenClock()
     mkdirSync(dir(home), { recursive: true })
     const original = JSON.stringify({ permissions: { allow: ['Bash(npm:*)'] }, statusLine: { type: 'command', command: 'my-status' } }, null, 2)
     writeFileSync(settingsPath(home), original)
 
-    expect(runRaw(home, [], clock).status).toBe(0)
-    expect(runRaw(home, ['--no-status-line'], clock).status).toBe(0)
-    expect(runRaw(home, ['--uninstall'], clock).status).toBe(0)
+    expect(runRaw(home, [], {}, clock).status).toBe(0)
+    expect(runRaw(home, ['--no-status-line'], {}, clock).status).toBe(0)
+    expect(runRaw(home, ['--uninstall'], {}, clock).status).toBe(0)
 
     expect(backupsIn(home)).toEqual([
       'settings.json.backup.20261015_120000',
@@ -812,15 +822,214 @@ describe('install-hooks.sh: backups', () => {
 
   it('never overwrites a backup that is already there under the name it would pick', () => {
     const home = freshHome()
-    const clock = frozenClock(home)
+    const clock = frozenClock()
     mkdirSync(dir(home), { recursive: true })
     writeFileSync(settingsPath(home), '{"model": "opus"}')
     writeFileSync(join(dir(home), 'settings.json.backup.20261015_120000'), 'an older backup')
 
-    const res = runRaw(home, [], clock)
+    const res = runRaw(home, [], {}, clock)
     expect(res.status).toBe(0)
     expect(res.out).toContain('settings.json.backup.20261015_120000.1')
     expect(readFileSync(join(dir(home), 'settings.json.backup.20261015_120000'), 'utf8')).toBe('an older backup')
     expect(readFileSync(join(dir(home), 'settings.json.backup.20261015_120000.1'), 'utf8')).toBe('{"model": "opus"}')
+  })
+})
+
+describe('install-hooks.mjs: the bash installer\'s entries are migrated to the node form', () => {
+  const BASH_STATUS = `bash "${fwd(TRACKER_SCRIPT.replace(/agent-tracker\.mjs$/, 'status-line.sh'))}"`
+
+  it('rewrites `bash ".../agent-tracker.sh"` entries of this very checkout to `node ".../agent-tracker.mjs"`, once, and a re-run is a no-op', () => {
+    const home = freshHome()
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo foreign' }] }
+    const old: any = { permissions: { allow: ['Bash(ls:*)'] }, hooks: {} }
+    for (const event of EVENTS) old.hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: BASH_TRACKER }] }]
+    old.hooks.PreToolUse = [foreign, ...old.hooks.PreToolUse]
+    writeFileSync(settingsPath(home), JSON.stringify(old, null, 2))
+
+    const out = runInstaller(home)
+    const settings = readSettings(home)
+    for (const event of EVENTS) {
+      expect(trackerGroups(settings, event)).toEqual([OUR_GROUP])
+      expect(out).toContain(`[update] ${event} (was ${fwd(TRACKER_SCRIPT).replace(/agent-tracker\.mjs$/, 'agent-tracker.sh')})`)
+    }
+    expect(settings.hooks.PreToolUse).toEqual([foreign, OUR_GROUP])
+    expect(settings.permissions).toEqual(old.permissions)
+    expect(readFileSync(settingsPath(home), 'utf8')).not.toContain('bash')
+    expect(out).toContain(`hooks: 0 added, ${EVENTS.length} repointed at this checkout, 0 unchanged`)
+
+    const before = readFileSync(settingsPath(home))
+    const again = runInstaller(home)
+    expect(readFileSync(settingsPath(home)).equals(before)).toBe(true)
+    expect(again).toContain(`hooks: 0 added, 0 repointed at this checkout, ${EVENTS.length} unchanged`)
+  })
+
+  it('migrates the bash status line too, keeping its padding, refreshInterval and the chained command', () => {
+    const home = freshHome()
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    mkdirSync(join(home, '.agent-office'), { recursive: true })
+    writeFileSync(join(home, '.agent-office', 'statusline-prev'), '~/.claude/statusline.sh\n')
+    writeFileSync(settingsPath(home), JSON.stringify({
+      statusLine: { type: 'command', command: BASH_STATUS, padding: 3, refreshInterval: 7 },
+      subagentStatusLine: { type: 'command', command: `${BASH_STATUS} --subagents` },
+    }))
+
+    const out = runInstaller(home, ['--status-line-only'])
+    const settings = readSettings(home)
+    expect(settings.statusLine).toEqual({ type: 'command', command: expect.stringMatching(/^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs"$/), padding: 3, refreshInterval: 7 })
+    expect(settings.subagentStatusLine).toEqual({ type: 'command', command: expect.stringMatching(/^(?:node|"[^"]+") ".*\/hooks\/status-line\.mjs" --subagents$/) })
+    expect(out).toContain('[update] statusLine (was ')
+    expect(out).toContain('[update] subagentStatusLine (was ')
+    expect(out).not.toContain('[wrap]')
+    expect(readFileSync(join(home, '.agent-office', 'statusline-prev'), 'utf8')).toBe('~/.claude/statusline.sh\n')
+  })
+
+  it('recognises the office\'s script whatever runs it: an absolute node path, a Windows path with backslashes, unquoted', () => {
+    const home = freshHome()
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(settingsPath(home), JSON.stringify({
+      hooks: {
+        PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: '"/opt/node/bin/node" "/old/a/hooks/agent-tracker.mjs"' }] }],
+        PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'node "C:\\old\\b\\hooks\\agent-tracker.mjs"' }] }],
+        SubagentStop: [{ matcher: '', hooks: [{ type: 'command', command: 'node C:\\old\\c\\hooks\\agent-tracker.mjs' }] }],
+        Stop: [{ matcher: '', hooks: [{ type: 'command', command: '/old/d/hooks/agent-tracker.mjs' }] }],
+      },
+    }))
+
+    const out = runInstaller(home)
+    const settings = readSettings(home)
+    for (const event of ['PreToolUse', 'PostToolUse', 'SubagentStop', 'Stop']) expect(trackerGroups(settings, event)).toEqual([OUR_GROUP])
+    expect(out).toContain('[update] PreToolUse (was /old/a/hooks/agent-tracker.mjs)')
+    expect(out).toContain('[update] PostToolUse (was C:\\old\\b\\hooks\\agent-tracker.mjs)')
+    expect(out).toContain('[update] SubagentStop (was C:\\old\\c\\hooks\\agent-tracker.mjs)')
+    expect(out).toContain('[update] Stop (was /old/d/hooks/agent-tracker.mjs)')
+  })
+
+  it('a bash entry and a node entry for one event are one office entry twice: the second is dropped', () => {
+    const home = freshHome()
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(settingsPath(home), JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: '', hooks: [stale('/old/a')] }, { matcher: '', hooks: [{ type: 'command', command: 'node "/old/b/hooks/agent-tracker.mjs"' }] }] },
+    }))
+
+    const out = runInstaller(home)
+    expect(readSettings(home).hooks.PreToolUse).toEqual([OUR_GROUP])
+    expect(out).toContain('[update] PreToolUse (was /old/a/hooks/agent-tracker.sh)')
+    expect(out).toContain('[drop] PreToolUse duplicate office entry (was /old/b/hooks/agent-tracker.mjs)')
+  })
+
+  it('--uninstall removes both forms, wherever they point, and puts a chained status line back', () => {
+    const home = freshHome()
+    mkdirSync(join(home, '.agent-office'), { recursive: true })
+    writeFileSync(join(home, '.agent-office', 'statusline-prev'), '~/.claude/statusline.sh\n')
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo foreign' }] }
+    writeFileSync(settingsPath(home), JSON.stringify({
+      hooks: {
+        PreToolUse: [foreign, { matcher: '', hooks: [stale('/old/a')] }],
+        PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'node "/old/b/hooks/agent-tracker.mjs"' }] }],
+        Stop: [{ matcher: '', hooks: [{ type: 'command', command: BASH_TRACKER }, { type: 'command', command: `node "${fwd(TRACKER_SCRIPT)}"` }] }],
+      },
+      statusLine: { type: 'command', command: BASH_STATUS, padding: 2 },
+      subagentStatusLine: { type: 'command', command: 'node "/old/c/hooks/status-line.mjs" --subagents' },
+    }, null, 2))
+
+    const out = runInstaller(home, ['--uninstall'])
+    const settings = readSettings(home)
+    expect(settings.hooks).toEqual({ PreToolUse: [foreign] })
+    expect(settings.statusLine).toEqual({ type: 'command', command: '~/.claude/statusline.sh', padding: 2 })
+    expect(settings).not.toHaveProperty('subagentStatusLine')
+    expect(out).toContain('[remove] PreToolUse (/old/a/hooks/agent-tracker.sh)')
+    expect(out).toContain('[remove] PostToolUse (/old/b/hooks/agent-tracker.mjs)')
+    expect(out).toContain('hooks: 4 office entries removed')
+    expect(out).toContain('[remove] subagentStatusLine (was /old/c/hooks/status-line.mjs)')
+    expect(existsSync(join(home, '.agent-office', 'statusline-prev'))).toBe(false)
+  })
+})
+
+describe('install-hooks.mjs: which node the commands name', () => {
+  const dirs: string[] = []
+  afterEach(() => {
+    while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true })
+  })
+  const dirWith = (...files: string[]) => {
+    const d = mkdtempSync(join(tmpdir(), 'agent-office-bin-'))
+    dirs.push(d)
+    for (const f of files) {
+      writeFileSync(join(d, f), '')
+      chmodSync(join(d, f), 0o755)
+    }
+    return d
+  }
+  const execPath = 'C:\\Program Files\\nodejs\\node.exe'
+
+  it('POSIX: bare `node` when a non-login PATH finds it, else the absolute path of the running node in forward slashes, quoted', () => {
+    expect(nodeCommand({ platform: 'linux', loginPath: dirWith('node'), execPath })).toBe('node')
+    expect(nodeCommand({ platform: 'darwin', loginPath: dirWith('other'), execPath })).toBe('"C:/Program Files/nodejs/node.exe"')
+    expect(nodeCommand({ platform: 'linux', loginPath: '', execPath: '/Users/me/.nvm/versions/node/v22/bin/node' })).toBe('"/Users/me/.nvm/versions/node/v22/bin/node"')
+  })
+
+  it('Windows: bare `node` when node.exe is on PATH, else the absolute path', () => {
+    expect(nodeCommand({ platform: 'win32', env: { PATH: `C:\\nowhere;${dirWith('node.exe')}` }, execPath })).toBe('node')
+    expect(nodeCommand({ platform: 'win32', env: { Path: dirWith('node.exe') }, execPath })).toBe('node')
+    expect(nodeCommand({ platform: 'win32', env: { PATH: dirWith('node.cmd') }, execPath })).toBe('"C:/Program Files/nodejs/node.exe"')
+    expect(nodeCommand({ platform: 'win32', env: {}, execPath })).toBe('"C:/Program Files/nodejs/node.exe"')
+  })
+
+  it.skipIf(process.platform !== 'win32')('Windows: with node.exe off the PATH the installer writes the absolute path of the node that ran it', () => {
+    const home = freshHome()
+    const res = runRaw(home, [], { PATH: dirWith(), Path: dirWith() })
+    expect(res.status).toBe(0)
+    const settings = readSettings(home)
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe(`"${fwd(process.execPath)}" "${fwd(TRACKER_SCRIPT)}"`)
+    expect(settings.statusLine.command).toBe(`"${fwd(process.execPath)}" "${fwd(TRACKER_SCRIPT.replace(/agent-tracker\.mjs$/, 'status-line.mjs'))}"`)
+  })
+})
+
+describe('install-hooks.mjs: reading a hook command', () => {
+  it('splits like a shell and keeps the backslashes of a quoted Windows path', () => {
+    expect(shellWords('node "/a b/hooks/agent-tracker.mjs"')).toEqual(['node', '/a b/hooks/agent-tracker.mjs'])
+    expect(shellWords('node "C:\\a\\hooks\\agent-tracker.mjs"')).toEqual(['node', 'C:\\a\\hooks\\agent-tracker.mjs'])
+    expect(shellWords('node "say \\"hi\\" \\\\ done"')).toEqual(['node', 'say "hi" \\ done'])
+  })
+
+  it('finds hooks/<name>.sh or .mjs under any interpreter, and nothing that only contains the name', () => {
+    expect(scriptPathIn('node "/x/hooks/agent-tracker.mjs"', 'agent-tracker.mjs')).toBe('/x/hooks/agent-tracker.mjs')
+    expect(scriptPathIn('bash "/x/hooks/agent-tracker.sh"', 'agent-tracker.mjs')).toBe('/x/hooks/agent-tracker.sh')
+    expect(scriptPathIn('"/opt/n/node" "/x/hooks/status-line.mjs" --subagents', 'status-line.sh')).toBe('/x/hooks/status-line.mjs')
+    expect(scriptPathIn('node "C:\\x\\hooks\\status-line.mjs"', 'status-line.mjs')).toBe('C:\\x\\hooks\\status-line.mjs')
+    expect(scriptPathIn('node C:\\x\\hooks\\status-line.mjs', 'status-line.mjs')).toBe('C:\\x\\hooks\\status-line.mjs')
+    expect(scriptPathIn('node "${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs"', 'agent-tracker.mjs')).toBe('${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs')
+    expect(scriptPathIn('node ~/bin/my-agent-tracker.mjs', 'agent-tracker.mjs')).toBeNull()
+    expect(scriptPathIn('node /x/other/agent-tracker.mjs', 'agent-tracker.mjs')).toBeNull()
+    expect(scriptPathIn('node ~/.claude/status-line.mjs', 'status-line.mjs')).toBeNull()
+    expect(scriptPathIn(undefined, 'agent-tracker.mjs')).toBeNull()
+  })
+
+  it('INSTALLER_EVENTS is the list this suite expects (hooks.json is held to it by plugin.test.ts)', () => {
+    expect([...INSTALLER_EVENTS].sort()).toEqual([...EVENTS].sort())
+  })
+})
+
+describe('install-hooks.mjs: a symlinked settings.json stays a symlink', () => {
+  it('the merge and the uninstall write through it (a dotfiles repo keeps owning the file)', (ctx) => {
+    const home = freshHome()
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const real = join(home, 'dotfiles-settings.json')
+    writeFileSync(real, JSON.stringify({ model: 'opus' }, null, 2) + '\n')
+    try {
+      symlinkSync(real, settingsPath(home))
+    } catch {
+      ctx.skip() // creating a symlink needs a privilege this Windows account lacks
+      return
+    }
+
+    runInstaller(home)
+    expect(lstatSync(settingsPath(home)).isSymbolicLink()).toBe(true)
+    expect(Object.keys(JSON.parse(readFileSync(real, 'utf8')).hooks)).toHaveLength(EVENTS.length)
+
+    runInstaller(home, ['--uninstall'])
+    expect(lstatSync(settingsPath(home)).isSymbolicLink()).toBe(true)
+    expect(readFileSync(real, 'utf8')).toBe(JSON.stringify({ model: 'opus' }, null, 2) + '\n')
   })
 })

@@ -28,9 +28,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check-assets": "node scripts/check-assets.mjs",
-    "install-hooks": "bash hooks/install-hooks.sh",
-    "install-status-line": "bash hooks/install-hooks.sh --status-line-only",
-    "uninstall-hooks": "bash hooks/install-hooks.sh --uninstall",
+    "install-hooks": "node hooks/install-hooks.mjs",
+    "install-status-line": "node hooks/install-hooks.mjs --status-line-only",
+    "uninstall-hooks": "node hooks/install-hooks.mjs --uninstall",
     "doctor": "node scripts/doctor.mjs",
     "version": "node scripts/sync-plugin-version.mjs && git add .claude-plugin/plugin.json"
   },

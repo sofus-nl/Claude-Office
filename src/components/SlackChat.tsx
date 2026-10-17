@@ -48,7 +48,8 @@ function logPromptsHint(level: string): string {
   return [
     `Prompt logging: ${level} — ${LOG_PROMPTS_WHAT[level] ?? 'unknown level'}.`,
     'A server setting (~/.agent-office/settings.json); change it with the office token:',
-    `curl -X POST ${SETTINGS_URL} -H "Authorization: Bearer $(cat ~/.agent-office/auth-token)" -H 'Content-Type: application/json' -d '{"logPrompts":"${level === 'off' ? 'summary' : 'off'}"}'`,
+    // One line that runs the same in bash, zsh and PowerShell: no $, backticks or nested double quotes
+    `node -e "const t=require('fs').readFileSync(require('os').homedir()+'/.agent-office/auth-token','utf8').trim(); fetch('${SETTINGS_URL}',{method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},body:JSON.stringify({logPrompts:'${level === 'off' ? 'summary' : 'off'}'})}).then(r=>console.log(r.status))"`,
   ].join('\n')
 }
 

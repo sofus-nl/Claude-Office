@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
+import { EVENTS } from '../hooks/install-hooks.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const TRACKER = join(ROOT, 'hooks', 'agent-tracker.sh')
@@ -39,15 +40,10 @@ const VALID_EVENTS = [
 ]
 
 /**
- * What hooks/install-hooks.sh registers — read from its EVENTS tuple, so the
+ * What the installer registers (hooks/install-hooks.mjs EVENTS), so the
  * plugin and the installer cannot drift apart without this test noticing.
  */
-const INSTALLER_EVENTS = (() => {
-  const source = readFileSync(join(ROOT, 'hooks', 'install-hooks.sh'), 'utf8')
-  const tuple = /^EVENTS = \(([\s\S]*?)^\)/m.exec(source)
-  if (!tuple) throw new Error('could not find the EVENTS tuple in hooks/install-hooks.sh')
-  return Array.from(tuple[1].matchAll(/'([A-Za-z]+)'/g), (m) => m[1])
-})()
+const INSTALLER_EVENTS: string[] = EVENTS
 
 const TRACKER_COMMAND = 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh"'
 
@@ -273,7 +269,7 @@ describe('commands/office.md', () => {
     expect(source).toContain('npm run install-status-line')
     expect(source).not.toMatch(/run `npm run install-hooks` from/)
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
-    expect(pkg.scripts['install-status-line']).toBe('bash hooks/install-hooks.sh --status-line-only')
+    expect(pkg.scripts['install-status-line']).toBe('node hooks/install-hooks.mjs --status-line-only')
   })
 })
 
