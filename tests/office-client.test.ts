@@ -92,8 +92,13 @@ describe('office-client: send', () => {
     server.close()
   })
 
-  it('resolves null when nothing listens', async () => {
+  it('resolves null when nothing listens, over http or https', async () => {
     expect(await send('http://127.0.0.1:9/event', { method: 'POST', body: '{}' })).toBeNull()
+    expect(await send('https://127.0.0.1:9/event', { method: 'POST', body: '{}' })).toBeNull()
+  })
+
+  it('resolves null for a URL node cannot request, never throws', async () => {
+    expect(await send('ftp://127.0.0.1/event', { method: 'POST', body: '{}' })).toBeNull()
   })
 
   it('every event reaches a server whose event loop is busy, one short-lived process per event (as hooks run)', async () => {
@@ -114,7 +119,7 @@ describe('office-client: send', () => {
       check()
     })
     const port = Number(await nextLine())
-    const clientSrc = `import(${JSON.stringify(`file://${CLIENT.replace(/\\/g, '/')}`)}).then(m =>
+    const clientSrc = `import(${JSON.stringify(pathToFileURL(CLIENT).href)}).then(m =>
       m.send('http://127.0.0.1:${port}/event', { method: 'POST', body: '{"type":"x"}' }))`
     const runs = 20
     for (let i = 0; i < runs; i++) {

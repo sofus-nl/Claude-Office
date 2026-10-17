@@ -1,136 +1,136 @@
 {
-  "description": "Forwards Claude Code hook events to the Agent Office server (http://localhost:3334/event, or AGENT_OFFICE_EVENT_URL / AGENT_OFFICE_PORT). Every entry runs hooks/agent-tracker.sh, which exits 0 silently when the server is down or when the event is one it does not act on. The same 19 events as hooks/install-hooks.sh (its EVENTS tuple); keep the two lists in step. No matchers: the tracker reads every PreToolUse and every main-thread PostToolUse (a granted tool's completion lowers a permission hand), and the other events either have no matcher support or are wanted on every occurrence.",
+  "description": "Forwards Claude Code hook events to the Agent Office server (http://localhost:3334/event, or AGENT_OFFICE_EVENT_URL / AGENT_OFFICE_PORT). Every entry runs hooks/agent-tracker.mjs with node (Git Bash and PowerShell run that command alike, so it works on Windows too), which exits 0 silently when the server is down or when the event is one it does not act on. The same 19 events as hooks/install-hooks.mjs (its EVENTS list); keep the two lists in step. No matchers: the tracker reads every PreToolUse and every main-thread PostToolUse (a granted tool's completion lowers a permission hand), and the other events either have no matcher support or are wanted on every occurrence.",
   "hooks": {
     "PreToolUse": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PostToolUse": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PostToolUseFailure": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "SubagentStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PermissionRequest": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "Notification": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "StopFailure": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PostCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PostToolBatch": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "CwdChanged": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "PostModelSwitch": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "TaskCreated": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ],
     "TaskCompleted": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh\"" }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs\"" }
         ]
       }
     ]

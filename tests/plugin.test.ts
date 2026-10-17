@@ -17,7 +17,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { EVENTS } from '../hooks/install-hooks.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
-const TRACKER = join(ROOT, 'hooks', 'agent-tracker.sh')
+const TRACKER = join(ROOT, 'hooks', 'agent-tracker.mjs')
 const readJson = (rel: string) => JSON.parse(readFileSync(join(ROOT, rel), 'utf8'))
 
 const pkg = readJson('package.json')
@@ -45,7 +45,7 @@ const VALID_EVENTS = [
  */
 const INSTALLER_EVENTS: string[] = EVENTS
 
-const TRACKER_COMMAND = 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.sh"'
+const TRACKER_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/hooks/agent-tracker.mjs"'
 
 describe('.claude-plugin/plugin.json', () => {
   it('names the plugin agent-office with a kebab-case name Claude Code accepts', () => {
@@ -148,7 +148,7 @@ describe('hooks/hooks.json', () => {
     expect(Object.keys(hooks).sort()).toEqual([...INSTALLER_EVENTS].sort())
   })
 
-  it('runs agent-tracker.sh through ${CLAUDE_PLUGIN_ROOT}, double-quoted, once per event', () => {
+  it('runs agent-tracker.mjs through ${CLAUDE_PLUGIN_ROOT}, double-quoted, once per event', () => {
     for (const [event, groups] of Object.entries(hooks)) {
       expect(Array.isArray(groups), `hooks.${event} must be a list of matcher groups`).toBe(true)
       expect(groups, `hooks.${event} should hold one group`).toHaveLength(1)
@@ -187,7 +187,7 @@ describe('hooks/hooks.json', () => {
   })
 })
 
-describe('hooks/hooks.json × agent-tracker.sh', () => {
+describe('hooks/hooks.json × agent-tracker.mjs', () => {
   // A payload per registered event, in the shape Claude Code 2.1.300 sends
   // (see tests/hook-script.test.ts for the verbatim captures). Run through
   // the real script, not just its Python, with no office server to talk to.
@@ -220,7 +220,7 @@ describe('hooks/hooks.json × agent-tracker.sh', () => {
   afterAll(() => rmSync(emptyHome, { recursive: true, force: true }))
 
   function runTracker(payload: object) {
-    const r = spawnSync('bash', [TRACKER], {
+    const r = spawnSync(process.execPath, [TRACKER], {
       input: JSON.stringify(payload),
       encoding: 'utf8',
       env: { ...process.env, AGENT_OFFICE_HOME: emptyHome },

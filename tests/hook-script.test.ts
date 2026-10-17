@@ -1,28 +1,27 @@
 /**
- * hooks/agent-tracker.sh — the Python section that turns a Claude Code hook
- * payload into an office event. The bash wrapper reads stdin, pipes the
- * payload into the Python (never through an environment variable or an
- * argument: a big tool_response would hit the exec's single-argument limit)
- * and curls the result, so the heredoc is lifted out (the same awk the repo
- * uses by hand) and run against real 2.1.x payload shapes exactly as the
- * wrapper runs it: `python3 -I -c <source>` with the payload on stdin. The
- * last group runs the whole script with a fake `curl` on PATH.
+ * hooks/agent-tracker.mjs — turns a Claude Code hook payload into an office
+ * event (buildEvent, called in-process against real 2.1.x payload shapes) and
+ * talks to the office: the last groups run the hook the way Claude Code
+ * starts it, `node hooks/agent-tracker.mjs` with the payload on stdin,
+ * against a fake office HTTP server on a loopback port.
  */
 
-import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash, createHmac } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import type { IncomingHttpHeaders, ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
+import { buildEvent, classifyCommand, loadSignals, mightSignal, resetSignals, signalsLoaded } from '../hooks/agent-tracker.mjs'
+import { officeUrl } from '../hooks/office-client.mjs'
 
-const TRACKER = fileURLToPath(new URL('../hooks/agent-tracker.sh', import.meta.url))
+const TRACKER = fileURLToPath(new URL('../hooks/agent-tracker.mjs', import.meta.url))
 
-const PYTHON = execFileSync('awk', ["/<<'PYEOF'/{f=1;next} /^PYEOF$/{f=0} f", TRACKER], { encoding: 'utf8' })
-if (!PYTHON.includes('hook_event_name')) throw new Error('could not extract the Python section from agent-tracker.sh')
-
-// The Python looks for $AGENT_OFFICE_HOME/answer-permissions (the server keeps
+// The hook looks for $AGENT_OFFICE_HOME/answer-permissions (the server keeps
 // that marker in step with its answerPermissions setting): point it at an
 // empty dir so a marker in the developer's real ~/.agent-office never changes
 // what the tests below see. The answer-from-the-office group sets its own.
@@ -30,20 +29,13 @@ const NO_MARKER_HOME = mkdtempSync(join(tmpdir(), 'agent-office-hook-home-'))
 afterAll(() => rmSync(NO_MARKER_HOME, { recursive: true, force: true }))
 
 /**
- * The hook's Python against a payload (on stdin, as the wrapper does): its
- * stdout content lines. The Python prints the event, then its POST signature
- * (empty here — these runs set no OFFICE_TOKEN), then `wait` for an answerable
- * PermissionRequest; the empty signature line is dropped so the tests speak to
- * the event-and-wait contract. The live wrapper reads the lines positionally
- * (sed -n), so the empty line there is harmless.
+ * The hook's event for a payload, as the lines the old Python section
+ * printed: the event as one JSON line, then `wait` for an answerable
+ * PermissionRequest. No lines when the hook has nothing to say.
  */
 function runHookLines(payload: unknown, env: Record<string, string> = {}): string[] {
-  const out = execFileSync('python3', ['-I', '-c', PYTHON], {
-    input: typeof payload === 'string' ? payload : JSON.stringify(payload),
-    encoding: 'utf8',
-    env: { ...process.env, AGENT_OFFICE_HOME: NO_MARKER_HOME, ...env },
-  }).trim()
-  return out ? out.split('\n').filter(line => line !== '') : []
+  const built = buildEvent(typeof payload === 'string' ? payload : JSON.stringify(payload), { ...process.env, AGENT_OFFICE_HOME: NO_MARKER_HOME, ...env })
+  return built ? [JSON.stringify(built.event), ...(built.wait ? ['wait'] : [])] : []
 }
 
 /** Canonical JSON as the hook's call_key writes it: keys sorted, no spaces. */
@@ -60,14 +52,14 @@ function callKeyOf(toolName: string, input: unknown): string {
   return createHash('sha256').update(`${toolName}\0${canonical(input)}`).digest('hex').slice(0, 16)
 }
 
-/** Run the hook's Python against a payload; null when it printed nothing. */
+/** Run the hook against a payload; null when it printed nothing. */
 function runHook(payload: unknown): Record<string, any> | null {
   const lines = runHookLines(payload)
   if (lines.length > 1) throw new Error(`expected one line, got ${lines.length}: ${lines.join(' | ')}`)
   return lines.length ? JSON.parse(lines[0]) : null
 }
 
-describe('agent-tracker.sh: Agent tool', () => {
+describe('agent-tracker.mjs: Agent tool', () => {
   it('PreToolUse Agent -> agent_spawned, with the role hinted from the task and background flag', () => {
     expect(runHook({
       hook_event_name: 'PreToolUse',
@@ -138,7 +130,7 @@ describe('agent-tracker.sh: Agent tool', () => {
   })
 })
 
-describe('agent-tracker.sh: inside a subagent', () => {
+describe('agent-tracker.mjs: inside a subagent', () => {
   it('PreToolUse Bash with agent_id -> agent_working tagged with the subagent', () => {
     expect(runHook({
       hook_event_name: 'PreToolUse',
@@ -229,7 +221,7 @@ describe('agent-tracker.sh: inside a subagent', () => {
  * Payloads captured verbatim from Claude Code 2.1.300 (scratchpad/hookcap,
  * 2026-10-14). Only the capture's own bookkeeping keys were dropped.
  */
-describe('agent-tracker.sh: captured 2.1.300 payloads', () => {
+describe('agent-tracker.mjs: captured 2.1.300 payloads', () => {
   const common = {
     session_id: '8cf68f64-5433-40f7-a130-557fc7f67e42',
     transcript_path: '/root/.claude/projects/-tmp-claude-0--home-user-Claude-Office-c25c5511-f321-521a-825b-f189ac4d57e8-scratchpad-hookcap/8cf68f64-5433-40f7-a130-557fc7f67e42.jsonl',
@@ -455,7 +447,7 @@ describe('agent-tracker.sh: captured 2.1.300 payloads', () => {
  * Code 2.1.300 (scratchpad/hookcap/events.jsonl, 2026-10-14): session_id,
  * transcript_path and cwd are in the base schema of every hook event.
  */
-describe('agent-tracker.sh: sessions', () => {
+describe('agent-tracker.mjs: sessions', () => {
   const base = {
     session_id: 'c25c5511-f321-521a-825b-f189ac4d57e8',
     transcript_path: '/root/.claude/projects/-tmp-claude-0--home-user-Claude-Office-c25c5511-f321-521a-825b-f189ac4d57e8-scratchpad-hookcap/c25c5511-f321-521a-825b-f189ac4d57e8.jsonl',
@@ -583,7 +575,7 @@ describe('agent-tracker.sh: sessions', () => {
   })
 })
 
-describe('agent-tracker.sh: MCP tools', () => {
+describe('agent-tracker.mjs: MCP tools', () => {
   it('PreToolUse mcp__github__get_me -> mcp_call', () => {
     expect(runHook({ hook_event_name: 'PreToolUse', tool_name: 'mcp__github__get_me', tool_input: {} }))
       .toEqual({ type: 'mcp_call', server: 'github', tool: 'get_me' })
@@ -603,7 +595,7 @@ describe('agent-tracker.sh: MCP tools', () => {
   })
 })
 
-describe('agent-tracker.sh: every tool call is activity', () => {
+describe('agent-tracker.mjs: every tool call is activity', () => {
   it('PreToolUse of a tool without a specific status line -> a generic "using <tool>" working status, main thread or worker', () => {
     expect(runHook({ hook_event_name: 'PreToolUse', tool_name: 'WebFetch', tool_input: { url: 'https://example.com' } }))
       .toEqual({ type: 'agent_working', status: 'using WebFetch', tool: 'WebFetch' })
@@ -678,7 +670,7 @@ describe('agent-tracker.sh: every tool call is activity', () => {
   })
 })
 
-describe('agent-tracker.sh: ignored payloads', () => {
+describe('agent-tracker.mjs: ignored payloads', () => {
   it('prints nothing for an empty payload or one with neither a tool_name nor a session', () => {
     expect(runHook({ hook_event_name: 'UserPromptSubmit', prompt: 'hello' })).toBeNull()
     expect(runHook({ hook_event_name: 'Stop', last_assistant_message: 'x' })).toBeNull()
@@ -700,7 +692,7 @@ describe('agent-tracker.sh: ignored payloads', () => {
  * capture's own bookkeeping keys were dropped. None of these carries a
  * tool_name except PermissionRequest.
  */
-describe('agent-tracker.sh: the main thread (session_* events)', () => {
+describe('agent-tracker.mjs: the main thread (session_* events)', () => {
   const HOOKCAP = '/tmp/claude-0/-home-user-Claude-Office/c25c5511-f321-521a-825b-f189ac4d57e8/scratchpad/hookcap'
   const PROJECTS = '/root/.claude/projects/-tmp-claude-0--home-user-Claude-Office-c25c5511-f321-521a-825b-f189ac4d57e8-scratchpad-hookcap'
   /** Common keys of a captured session: session_id, transcript_path, cwd, scratchpad_dir */
@@ -990,70 +982,104 @@ describe('agent-tracker.sh: the main thread (session_* events)', () => {
   })
 })
 
+/** A request the fake office received. */
+type Hit = { method: string; url: string; auth?: string; ts?: string; sig?: string; body: string; headers: IncomingHttpHeaders }
+
+/** A fake office: `plan` answers each request in order of arrival (POST /event first, then the polls). */
+async function fakeOffice(plan: Array<(hit: Hit, res: ServerResponse, hits: Hit[]) => void>) {
+  const hits: Hit[] = []
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', () => {
+      const hit = {
+        method: req.method ?? '', url: req.url ?? '', auth: req.headers.authorization,
+        ts: req.headers['x-office-timestamp'] as string | undefined,
+        sig: req.headers['x-office-signature'] as string | undefined,
+        body: Buffer.concat(chunks).toString('utf8'),
+        headers: req.headers,
+      }
+      hits.push(hit)
+      const step = plan[hits.length - 1] ?? plan[plan.length - 1]
+      step(hit, res, hits)
+    })
+  })
+  await new Promise<void>(res => server.listen(0, '127.0.0.1', () => res()))
+  const port = (server.address() as AddressInfo).port
+  return { port, hits, close: () => new Promise<void>(res => { server.closeAllConnections(); server.close(() => res()) }) }
+}
+const json = (res: ServerResponse, status: number, body: unknown) => {
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(body))
+}
+
 /**
- * The whole script, with a fake `curl` on PATH that records its argv AND the
- * body it was handed on stdin (the hook sends the body with --data-binary @-,
- * so neither the token nor the event text is ever on argv). The payload
- * reaches the Python on stdin, stdout stays empty (on UserPromptSubmit it
- * would be injected into Claude's context) and the exit code is 0.
+ * The hook as Claude Code starts it: `node agent-tracker.mjs`, the payload on
+ * stdin. Spawned asynchronously: the fake office lives on this event loop, so
+ * a synchronous spawn would starve it and every request would time out.
  */
-describe('agent-tracker.sh: the bash wrapper', () => {
+function spawnHook(payload: unknown, env: Record<string, string | undefined>) {
+  const started = Date.now()
+  return new Promise<{ stdout: string; stderr: string; status: number | null; ms: number }>((resolve, reject) => {
+    const child = spawn(process.execPath, [TRACKER], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8').on('data', c => { stdout += c })
+    child.stderr.setEncoding('utf8').on('data', c => { stderr += c })
+    child.on('error', reject)
+    child.on('close', status => resolve({ stdout, stderr, status, ms: Date.now() - started }))
+    child.stdin.on('error', () => { /* the hook may exit before it has read everything */ })
+    child.stdin.end(payload instanceof Uint8Array || typeof payload === 'string' ? payload : JSON.stringify(payload))
+  })
+}
+
+/**
+ * The whole hook, against a fake office. The payload reaches the hook on
+ * stdin, stdout stays empty (on UserPromptSubmit it would be injected into
+ * Claude's context), the exit code is 0, and the event leaves as one JSON body
+ * in a POST that is signed with the token (the token itself never travels).
+ */
+describe('agent-tracker.mjs: the hook process', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agent-office-tracker-'))
-  const bin = join(dir, 'bin')
   const officeHome = join(dir, 'office')
-  const log = join(dir, 'curl.jsonl')
-  mkdirSync(bin)
   mkdirSync(officeHome)
-  writeFileSync(join(bin, 'curl'), `#!/usr/bin/env bash\npython3 -c 'import json,sys; print(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read()}))' "$@" >> "$FAKE_CURL_LOG"\n`)
-  chmodSync(join(bin, 'curl'), 0o755)
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-
-  /** Run the script on a payload; resolve with its stdout/status and what curl was given (the POST is backgrounded). */
-  async function runScript(payload: unknown, extraEnv: Record<string, string> = {}) {
-    rmSync(log, { force: true })
-    const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:${process.env.PATH}`, AGENT_OFFICE_HOME: officeHome, FAKE_CURL_LOG: log }
-    // The caller's own office settings must not leak into the script under test
-    delete env.AGENT_OFFICE_EVENT_URL
-    delete env.AGENT_OFFICE_PORT
-    Object.assign(env, extraEnv)
-    const res = spawnSync('bash', [TRACKER], {
-      input: typeof payload === 'string' ? payload : JSON.stringify(payload),
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-      env,
-    })
-    // The fake curl's `>>` creates the log before its python has written the
-    // line, so wait for a complete line, not just for the file (a read in that
-    // window parsed '' and failed under full-suite load)
-    const complete = () => existsSync(log) && readFileSync(log, 'utf8').endsWith('\n')
-    for (let i = 0; i < 60 && !complete(); i++) await sleep(50)
-    const calls = complete() ? readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { argv: string[]; stdin: string }) : []
-    const args = calls[0]?.argv ?? null
-    const body = calls[0]?.stdin ? JSON.parse(calls[0].stdin) : null
-    return { stdout: res.stdout, stderr: res.stderr, status: res.status, calls, args, body }
+  /** Run the hook on a payload against a fake office that says {ok}; resolve with its stdout/status and what the office was sent. */
+  async function runScript(payload: unknown, extraEnv: Record<string, string> | ((port: number) => Record<string, string>) = {}) {
+    const office = await fakeOffice([(hit, res) => json(res, 200, { ok: true })])
+    try {
+      const env: Record<string, string | undefined> = { ...process.env, AGENT_OFFICE_HOME: officeHome, AGENT_OFFICE_PORT: String(office.port) }
+      // The caller's own office settings must not leak into the hook under test
+      delete env.AGENT_OFFICE_EVENT_URL
+      Object.assign(env, typeof extraEnv === 'function' ? extraEnv(office.port) : extraEnv)
+      const res = await spawnHook(payload, env)
+      const calls = office.hits
+      const hit = calls[0]
+      return { ...res, calls, hit, body: hit ? JSON.parse(hit.body) : null }
+    } finally {
+      await office.close()
+    }
   }
 
   const session = { session_id: 's-wrap', cwd: '/home/me/proj', transcript_path: '/t/s-wrap.jsonl' }
 
-  it('UserPromptSubmit: nothing on stdout, exit 0, the session_prompt goes to curl as one JSON body on stdin, never argv', async () => {
+  it('UserPromptSubmit: nothing on stdout, exit 0, the session_prompt goes to the office as one JSON body in a POST to /event', async () => {
     const run = await runScript({ ...session, prompt_id: 'p1', hook_event_name: 'UserPromptSubmit', prompt: 'fix the bug' })
     expect(run.status).toBe(0)
     expect(run.stdout).toBe('')
     expect(run.stderr).toBe('')
     expect(run.calls).toHaveLength(1)
-    expect(run.args?.slice(0, 4)).toEqual(['-sf', '-X', 'POST', 'http://127.0.0.1:3334/event'])
-    expect(run.args).toContain('--data-binary')
+    expect(run.hit).toMatchObject({ method: 'POST', url: '/event' })
+    expect(run.hit.headers['content-type']).toBe('application/json')
     expect(run.body).toEqual({ type: 'session_prompt', text: 'fix the bug', isWakeup: false, promptId: 'p1', sessionId: 's-wrap', project: 'proj', cwd: '/home/me/proj', transcriptPath: '/t/s-wrap.jsonl' })
     // No token file: nothing to sign with, and never an Authorization header
-    expect(run.args?.some(a => /Authorization/i.test(a))).toBe(false)
-    expect(run.args?.some(a => /X-Office-Signature/i.test(a))).toBe(false)
-    // The prompt text travels on stdin, not on the command line
-    expect(run.args?.some(a => a.includes('fix the bug'))).toBe(false)
+    expect(run.hit.auth).toBeUndefined()
+    expect(run.hit.sig).toBeUndefined()
+    expect(run.hit.ts).toBeUndefined()
   })
 
-  it('a 300 KB tool_response reaches the Python (stdin, not an argument that would fail with E2BIG) and leaves as a 120-char result', async () => {
+  it('a 300 KB tool_response reaches the hook (stdin) and leaves as a 120-char result', async () => {
     const run = await runScript({
       ...session, hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_BIG',
       tool_input: { description: 'Read everything', subagent_type: 'general-purpose' },
@@ -1066,30 +1092,31 @@ describe('agent-tracker.sh: the bash wrapper', () => {
     expect(run.body.result).toHaveLength(120)
   })
 
-  it('TaskCreated: nothing on stdout (which could veto the task), exit 0, the task_created goes to curl in the background', async () => {
+  it('TaskCreated: nothing on stdout (which could veto the task), exit 0, the task_created goes to the office', async () => {
     const run = await runScript({ ...session, hook_event_name: 'TaskCreated', task_id: '4', task_subject: 'Write the board', task_description: 'Post-its on the whiteboard' })
     expect(run.status).toBe(0)
     expect(run.stdout).toBe('')
     expect(run.stderr).toBe('')
     expect(run.calls).toHaveLength(1)
-    expect(run.args).toContain('--max-time')
     expect(run.body).toEqual({ type: 'task_created', taskId: '4', subject: 'Write the board', sessionId: 's-wrap', project: 'proj', cwd: '/home/me/proj', transcriptPath: '/t/s-wrap.jsonl' })
     expect(JSON.stringify(run.body)).not.toContain('Post-its on the whiteboard')
   })
 
-  it('with a token file it SIGNS the request (X-Office-Timestamp/Signature headers) and never puts the token on argv; an ignored event never calls curl', async () => {
+  it('with a token file it SIGNS the request (X-Office-Timestamp/Signature over the raw body) and the token is nowhere in the request; an ignored event sends nothing', async () => {
     const token = 'a'.repeat(64)
     writeFileSync(join(officeHome, 'auth-token'), token + '\n')
     try {
       const run = await runScript({ ...session, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/x/y.js' } })
       expect(run.status).toBe(0)
-      // The token is nowhere on the command line, and no Authorization header
-      expect(run.args?.some(a => a.includes(token))).toBe(false)
-      expect(run.args?.some(a => /Authorization/i.test(a))).toBe(false)
-      // It is signed instead: a timestamp and a 64-hex signature ride as headers
-      const headers = (run.args ?? []).filter((_, i) => run.args?.[i - 1] === '-H')
-      expect(headers.some(h => /^X-Office-Timestamp: \d+$/.test(h))).toBe(true)
-      expect(headers.some(h => /^X-Office-Signature: [0-9a-f]{64}$/.test(h))).toBe(true)
+      const { hit } = run
+      // The token is nowhere on the wire, and no Authorization header
+      expect(hit.auth).toBeUndefined()
+      expect(JSON.stringify(hit.headers) + hit.body).not.toContain(token)
+      // It is signed instead: a timestamp and the HMAC over METHOD, path, timestamp and the raw body
+      expect(hit.ts).toMatch(/^\d+$/)
+      expect(Math.abs(Date.now() - Number(hit.ts))).toBeLessThan(60_000)
+      expect(hit.sig).toMatch(/^[0-9a-f]{64}$/)
+      expect(hit.sig).toBe(createHmac('sha256', token).update(`POST\n/event\n${hit.ts}\n${hit.body}`).digest('hex'))
       expect(run.body).toMatchObject({ type: 'agent_working', status: 'reading y.js' })
 
       const quiet = await runScript({ ...session, hook_event_name: 'Setup', trigger: 'init' })
@@ -1103,10 +1130,12 @@ describe('agent-tracker.sh: the bash wrapper', () => {
 
   it('posts to AGENT_OFFICE_EVENT_URL when set, else to 127.0.0.1:$AGENT_OFFICE_PORT/event, else to port 3334', async () => {
     const read = { ...session, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/x/y.js' } }
+    expect((await runScript(read)).hit.url).toBe('/event')
+    // The override wins over the port
+    expect((await runScript(read, port => ({ AGENT_OFFICE_PORT: '1', AGENT_OFFICE_EVENT_URL: `http://127.0.0.1:${port}/custom/event` }))).hit.url).toBe('/custom/event')
     // The default host is pinned to 127.0.0.1, not 'localhost' (no IPv6 ::1 squatter)
-    expect((await runScript(read)).args?.[3]).toBe('http://127.0.0.1:3334/event')
-    expect((await runScript(read, { AGENT_OFFICE_PORT: '3998' })).args?.[3]).toBe('http://127.0.0.1:3998/event')
-    expect((await runScript(read, { AGENT_OFFICE_PORT: '3998', AGENT_OFFICE_EVENT_URL: 'http://127.0.0.1:4100/event' })).args?.[3]).toBe('http://127.0.0.1:4100/event')
+    expect(officeUrl('/event', undefined, {})).toBe('http://127.0.0.1:3334/event')
+    expect(officeUrl('/event', undefined, { AGENT_OFFICE_PORT: '3998' })).toBe('http://127.0.0.1:3998/event')
   })
 
   it('a deploy: the signals ride on the one JSON body the call sends, stdout stays empty, exit 0', async () => {
@@ -1120,20 +1149,44 @@ describe('agent-tracker.sh: the bash wrapper', () => {
       signals: [{ kind: 'deploy_start', target: 'proj', command: 'vercel deploy --prod' }],
     })
   })
+
+  it('never prints and never fails: no office, a payload that is not UTF-8 or not JSON, an office that answers garbage', async () => {
+    const probe = await fakeOffice([])
+    const deadPort = probe.port
+    await probe.close()
+    const env = { ...process.env, AGENT_OFFICE_HOME: officeHome, AGENT_OFFICE_PORT: String(deadPort) }
+    delete env.AGENT_OFFICE_EVENT_URL
+    const prompt = { ...session, hook_event_name: 'UserPromptSubmit', prompt: 'hi' }
+    for (const input of [prompt, '{"prompt": "é"', Buffer.from([0x7b, 0xff, 0xfe, 0x7d]), '', 'not json']) {
+      const run = await spawnHook(input, env)
+      expect(run.status).toBe(0)
+      expect(run.stdout).toBe('')
+      expect(run.stderr).toBe('')
+    }
+    const odd = await fakeOffice([(hit, res) => { res.writeHead(500); res.end('<html>boom</html>') }])
+    try {
+      const run = await spawnHook(prompt, { ...env, AGENT_OFFICE_PORT: String(odd.port) })
+      expect(run.status).toBe(0)
+      expect(run.stdout).toBe('')
+      expect(odd.hits).toHaveLength(1)
+    } finally {
+      await odd.close()
+    }
+  })
 })
 
 /**
  * Answering a permission dialog from the office (server/permissions.js). With
- * the marker file present the Python adds answerable / permissionMode /
- * suggestions / detail / nonce and a second `wait` line; the wrapper then POSTs
- * in the foreground and long-polls GET /permission/<id> with the real curl
+ * the marker file present the hook adds answerable / permissionMode /
+ * suggestions / detail / nonce and a second `wait` line; the hook then POSTs
+ * in the foreground and long-polls GET /permission/<id>
  * against a tiny Node server. It builds the hook output ITSELF from the
  * server's decision word, but only after verifying the proof
  * HMAC(token, nonce + permissionId + decision) — so a wrong, missing or
  * replayed proof, or any server-supplied JSON, prints nothing. Without the
  * marker nothing changes.
  */
-describe('agent-tracker.sh: answering a permission from the office', () => {
+describe('agent-tracker.mjs: answering a permission from the office', () => {
   const home = mkdtempSync(join(tmpdir(), 'agent-office-answer-'))
   const TOKEN = 'office-token'
   writeFileSync(join(home, 'answer-permissions'), 'on\n')
@@ -1151,7 +1204,7 @@ describe('agent-tracker.sh: answering a permission from the office', () => {
   const ALLOW_REMEMBER = { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedPermissions: SUGGESTIONS } } }
   const DENY = { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: 'Denied from Claude Office', interrupt: false } } }
 
-  it('the Python: with the marker the event gains answerable, permissionMode, suggestions, detail and a nonce, and a `wait` line follows; without it, the event is as before on one line', () => {
+  it('the event: with the marker the event gains answerable, permissionMode, suggestions, detail and a nonce, and a `wait` line follows; without it, the event is as before on one line', () => {
     const lines = runHookLines(write, { AGENT_OFFICE_HOME: home })
     expect(lines).toHaveLength(2)
     const callKey = callKeyOf('Write', write.tool_input)
@@ -1176,7 +1229,7 @@ describe('agent-tracker.sh: answering a permission from the office', () => {
     expect(runHookLines({ ...session, hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: '/x' } }, { AGENT_OFFICE_HOME: home })).toHaveLength(1)
   })
 
-  it('the Python: detail is the Bash command (newlines kept), the file path of a file tool, else the tool input as compact JSON, clamped to 400; suggestions keep their shape, at most 4', () => {
+  it('the event: detail is the Bash command (newlines kept), the file path of a file tool, else the tool input as compact JSON, clamped to 400; suggestions keep their shape, at most 4', () => {
     const ev = (payload: unknown) => JSON.parse(runHookLines(payload, { AGENT_OFFICE_HOME: home })[0])
     const base = { ...session, hook_event_name: 'PermissionRequest' }
     expect(ev({ ...base, tool_name: 'Bash', tool_input: { command: 'rm -rf\n  node_modules', description: 'd' } })).toMatchObject({ summary: 'rm -rf node_modules', detail: 'rm -rf\n  node_modules' })
@@ -1192,59 +1245,15 @@ describe('agent-tracker.sh: answering a permission from the office', () => {
     expect(ev({ ...base, tool_name: 'Bash', tool_input: { command: 'ls' }, permission_mode: 'acceptEdits' }).permissionMode).toBe('acceptEdits')
   })
 
-  // ── The wrapper against a tiny office ────────────────────────────────────
-  type Hit = { method: string; url: string; auth?: string; ts?: string; sig?: string; body: string }
-
-  /** A fake office: `plan` answers each request in order of arrival (POST /event first, then the polls). */
-  async function fakeOffice(plan: Array<(hit: Hit, res: import('node:http').ServerResponse, hits: Hit[]) => void>) {
-    const { createServer } = await import('node:http')
-    const hits: Hit[] = []
-    const server = createServer((req, res) => {
-      let body = ''
-      req.on('data', c => { body += c })
-      req.on('end', () => {
-        const hit = {
-          method: req.method ?? '', url: req.url ?? '', auth: req.headers.authorization,
-          ts: req.headers['x-office-timestamp'] as string | undefined,
-          sig: req.headers['x-office-signature'] as string | undefined,
-          body,
-        }
-        hits.push(hit)
-        const step = plan[hits.length - 1] ?? plan[plan.length - 1]
-        step(hit, res, hits)
-      })
-    })
-    await new Promise<void>(res => server.listen(0, '127.0.0.1', () => res()))
-    const port = (server.address() as import('node:net').AddressInfo).port
-    return { port, hits, close: () => new Promise<void>(res => server.close(() => res())) }
-  }
-  const json = (res: import('node:http').ServerResponse, status: number, body: unknown) => {
-    res.writeHead(status, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(body))
-  }
   /** The nonce the hook put in the POST /event body (for building a valid proof in the poll reply). */
   const nonceOf = (hits: Hit[]) => JSON.parse(hits[0].body).nonce as string
 
-  /**
-   * The whole script with the real curl, pointed at the fake office. Spawned
-   * asynchronously: the fake office lives on this event loop, so a spawnSync
-   * would starve it and every curl would time out.
-   */
+  /** The hook as Claude Code starts it, pointed at the fake office. */
   function runLive(payload: unknown, port: number, extraEnv: Record<string, string> = {}) {
     const env: Record<string, string | undefined> = { ...process.env, AGENT_OFFICE_HOME: home, AGENT_OFFICE_PORT: String(port) }
     delete env.AGENT_OFFICE_EVENT_URL
     Object.assign(env, extraEnv)
-    const started = Date.now()
-    return new Promise<{ stdout: string; stderr: string; status: number | null; ms: number }>((resolve, reject) => {
-      const child = spawn('bash', [TRACKER], { env, stdio: ['pipe', 'pipe', 'pipe'] })
-      let stdout = ''
-      let stderr = ''
-      child.stdout.setEncoding('utf8').on('data', c => { stdout += c })
-      child.stderr.setEncoding('utf8').on('data', c => { stderr += c })
-      child.on('error', reject)
-      child.on('close', status => resolve({ stdout, stderr, status, ms: Date.now() - started }))
-      child.stdin.end(JSON.stringify(payload))
-    })
+    return spawnHook(payload, env)
   }
 
   it('allowed: the POST and the poll are signed (no Authorization, no token on the wire), the office proves the token, and the hook builds the allow output itself', async () => {
@@ -1374,7 +1383,7 @@ describe('agent-tracker.sh: answering a permission from the office', () => {
     expect(down.ms).toBeLessThan(5_000)
 
     // A server that never answers: with the marker gone the POST is the usual
-    // backgrounded one (--max-time 1) and the script returns without waiting
+    // one, bounded at 1 s, and the hook returns without waiting for a decision
     const noMarker = mkdtempSync(join(tmpdir(), 'agent-office-nomarker-'))
     const hanging = await fakeOffice([() => { /* never responds */ }])
     try {
@@ -1388,7 +1397,7 @@ describe('agent-tracker.sh: answering a permission from the office', () => {
     }
   })
 
-  it('never blocks any other event: a PostToolUse with the marker present is backgrounded even when the server hangs', async () => {
+  it('never blocks any other event: a PostToolUse with the marker present is bounded at 1 s even when the server hangs', async () => {
     const hanging = await fakeOffice([() => { /* never responds */ }])
     try {
       const run = await runLive({ ...session, hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: '/x' }, tool_response: 'ok' }, hanging.port)
@@ -1402,42 +1411,178 @@ describe('agent-tracker.sh: answering a permission from the office', () => {
       await hanging.close()
     }
   })
+
+  // ── The conversation, hardened: what the old Python int() and the shell wrapper did ──
+  /** A fake office whose POST names permission `id` with the given `wait`, and whose polls all answer `poll`. */
+  const office = (id: string, wait: unknown, ...poll: Array<(hit: Hit, res: ServerResponse, hits: Hit[]) => void>) =>
+    fakeOffice([(hit, res) => json(res, 200, { ok: true, permissionId: id, wait }), ...poll])
+  const expired = (hit: Hit, res: ServerResponse) => json(res, 200, { status: 'expired', deadline: Date.now() - 1 })
+
+  it('pollMs goes through int() (floats, numeric strings, True), 0 and [] fall back to 20 s, and the wait is clamped to 1..30 s', async () => {
+    const cases: Array<[unknown, number]> = [[1500.9, 1], ['2500', 2], [' 7000 ', 7], ['1_000', 1], [0, 20], [[], 20], [{}, 20], [true, 1], [-5000, 1], [29999, 29], [31000, 30], [99999999, 30]]
+    for (const [pollMs, wait] of cases) {
+      const o = await office('pm', { pollMs, deadline: Date.now() + 60_000 }, expired)
+      try {
+        const run = await runLive(write, o.port)
+        expect(run.status).toBe(0)
+        expect(run.stdout).toBe('')
+        expect(o.hits.map(h => h.url), JSON.stringify(pollMs)).toEqual(['/event', `/permission/pm?wait=${wait}`])
+      } finally {
+        await o.close()
+      }
+    }
+  })
+
+  it('an unreadable pollMs or deadline ends the wait before the first poll (int() raised in the Python)', async () => {
+    for (const wait of [{ pollMs: 'abc' }, { pollMs: [1] }, { pollMs: 1000, deadline: 'x' }, { pollMs: 1000, deadline: [1] }, { pollMs: 'Infinity' }]) {
+      const o = await office('pm', wait, expired)
+      try {
+        const run = await runLive(write, o.port)
+        expect(run.status).toBe(0)
+        expect(run.stdout).toBe('')
+        expect(o.hits, JSON.stringify(wait)).toHaveLength(1)
+      } finally {
+        await o.close()
+      }
+    }
+  })
+
+  it('polls at most 40 times, then gives up silently', async () => {
+    const o = await office('pm', { pollMs: 1000, deadline: Date.now() + 60_000 }, (hit, res) => json(res, 200, { status: 'pending', deadline: Date.now() + 60_000 }))
+    try {
+      const run = await runLive(write, o.port)
+      expect(run.status).toBe(0)
+      expect(run.stdout).toBe('')
+      expect(o.hits).toHaveLength(41)
+    } finally {
+      await o.close()
+    }
+  })
+
+  it('a pending answer only a moment past its deadline keeps polling (2 s grace); an HTTP error ends the wait', async () => {
+    const grace = await office('pm', { pollMs: 1000 },
+      (hit, res) => json(res, 200, { status: 'pending', deadline: Date.now() - 1000 }),
+      (hit, res) => json(res, 200, { status: 'pending', deadline: true }),
+      expired)
+    try {
+      const run = await runLive(write, grace.port)
+      expect(run.stdout).toBe('')
+      // deadline `true` is the number 1 in Python (a bool is an int), so the third reply is long past due: stop there
+      expect(grace.hits).toHaveLength(3)
+    } finally {
+      await grace.close()
+    }
+    for (const [post, polls] of [[500, 0], [200, 1]] as const) {
+      const o = await fakeOffice([(hit, res) => (post === 200 ? json(res, 200, { ok: true, permissionId: 'pm', wait: { pollMs: 1000 } }) : json(res, post, { error: 'x' })),
+        (hit, res) => json(res, 503, { status: 'allowed', decision: 'allow', proof: proofFor('x', 'pm', 'allow') })])
+      try {
+        const run = await runLive(write, o.port)
+        expect(run.stdout).toBe('')
+        expect(o.hits).toHaveLength(1 + polls)
+      } finally {
+        await o.close()
+      }
+    }
+  })
+
+  it('the permission id is percent-encoded in the poll path, the proof is over the raw id', async () => {
+    const id = 'a/b?c#d e'
+    const o = await office(id, { pollMs: 1000 }, (hit, res, hits) => json(res, 200, { status: 'allowed', decision: 'allow', proof: proofFor(nonceOf(hits), id, 'allow'), deadline: Date.now() + 60_000 }))
+    try {
+      const run = await runLive(write, o.port)
+      expect(JSON.parse(run.stdout)).toEqual(ALLOW)
+      expect(o.hits[1].url).toBe('/permission/a%2Fb%3Fc%23d%20e?wait=1')
+    } finally {
+      await o.close()
+    }
+  })
+
+  it('only allow, allow-remember and deny are ever acted on, and only with the exact lowercase proof', async () => {
+    const attacks: Array<(hits: Hit[]) => object> = [
+      // A valid proof over a decision word the hook has no output for
+      hits => ({ status: 'allowed', decision: 'allow-forever', proof: proofFor(nonceOf(hits), 'pm', 'allow-forever') }),
+      hits => ({ status: 'allowed', decision: 'ALLOW', proof: proofFor(nonceOf(hits), 'pm', 'ALLOW') }),
+      hits => ({ status: 'allowed', decision: ['allow'], proof: proofFor(nonceOf(hits), 'pm', 'allow') }),
+      // The right proof, shouted, padded, truncated, doubled or not a string
+      hits => ({ status: 'allowed', decision: 'allow', proof: proofFor(nonceOf(hits), 'pm', 'allow').toUpperCase() }),
+      hits => ({ status: 'allowed', decision: 'allow', proof: ` ${proofFor(nonceOf(hits), 'pm', 'allow')}` }),
+      hits => ({ status: 'allowed', decision: 'allow', proof: proofFor(nonceOf(hits), 'pm', 'allow').slice(1) }),
+      hits => ({ status: 'allowed', decision: 'allow', proof: proofFor(nonceOf(hits), 'pm', 'allow').repeat(2) }),
+      hits => ({ status: 'allowed', decision: 'allow', proof: [proofFor(nonceOf(hits), 'pm', 'allow')] }),
+      hits => ({ status: 'allowed', decision: 'allow', proof: 'é'.repeat(32) }),
+      // A proof for another permission id
+      hits => ({ status: 'allowed', decision: 'allow', proof: proofFor(nonceOf(hits), 'other', 'allow') }),
+      // A status that is not a string
+      hits => ({ status: ['allowed'], decision: 'allow', proof: proofFor(nonceOf(hits), 'pm', 'allow') }),
+    ]
+    for (const attack of attacks) {
+      const o = await office('pm', { pollMs: 1000 }, (hit, res, hits) => json(res, 200, attack(hits)))
+      try {
+        const run = await runLive(write, o.port)
+        expect(run.status).toBe(0)
+        expect(run.stdout).toBe('')
+        expect(run.stderr).toBe('')
+      } finally {
+        await o.close()
+      }
+    }
+  })
+
+  it('without a token file nothing can be proven: the POST goes out unsigned and the answer prints nothing', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'agent-office-notoken-'))
+    writeFileSync(join(bare, 'answer-permissions'), 'on\n')
+    const o = await office('pm', { pollMs: 1000 }, (hit, res, hits) => json(res, 200, { status: 'allowed', decision: 'allow', proof: proofFor(nonceOf(hits), 'pm', 'allow') }))
+    try {
+      const run = await runLive(write, o.port, { AGENT_OFFICE_HOME: bare })
+      expect(run.status).toBe(0)
+      expect(run.stdout).toBe('')
+      expect(o.hits[0].sig).toBeUndefined()
+    } finally {
+      await o.close()
+      rmSync(bare, { recursive: true, force: true })
+    }
+  })
+
+  it('every request is signed over its own method, path and body, and the token is on the wire in none of them', async () => {
+    const o = await office('pm', { pollMs: 2000 },
+      (hit, res) => json(res, 200, { status: 'pending', deadline: Date.now() + 60_000 }),
+      (hit, res, hits) => json(res, 200, { status: 'denied', decision: 'deny', proof: proofFor(nonceOf(hits), 'pm', 'deny') }))
+    try {
+      const run = await runLive(write, o.port)
+      expect(JSON.parse(run.stdout)).toEqual(DENY)
+      expect(o.hits.map(h => h.method + ' ' + h.url)).toEqual(['POST /event', 'GET /permission/pm?wait=2', 'GET /permission/pm?wait=2'])
+      for (const h of o.hits) {
+        expect(JSON.stringify(h.headers) + h.body).not.toContain(TOKEN)
+        expect(h.auth).toBeUndefined()
+        expect(h.sig).toBe(createHmac('sha256', TOKEN).update(`${h.method}\n${h.url}\n${h.ts}\n${h.body}`).digest('hex'))
+      }
+      expect(o.hits[1].body).toBe('')
+    } finally {
+      await o.close()
+    }
+  })
 })
 
 /**
- * Signals: what a Bash command means (the "Signals" section of the Python).
- * classify_command is pure, so its table is driven directly: the heredoc is
- * run with a tool-less payload (it defines everything and exits), the
- * classifier is loaded the way the hook loads it (load_signals) and called.
- * The rest drives whole payloads through the Python like every test above.
+ * Signals: what a Bash command means (the "Signals" section of the hook).
+ * classifyCommand is pure, so its table is driven directly: a tool-less
+ * payload goes through the hook first (it must leave the classifier unloaded),
+ * then the classifier is loaded the way the hook loads it (loadSignals) and
+ * called. The rest drives whole payloads through the hook like every test above.
  */
-describe('agent-tracker.sh: signals', () => {
-  const DRIVER = [
-    'import io, json, sys',
-    'job = json.loads(sys.stdin.read())',
-    "ns = {'__name__': '__main__'}",
-    "sys.stdin = io.StringIO(json.dumps(job.get('payload') or {'tool_name': 'x'}))",
-    'sys.stdout, real = io.StringIO(), sys.stdout',
-    'try:',
-    "    exec(compile(job['src'], 'agent-tracker', 'exec'), ns)",
-    'except SystemExit:',
-    '    pass',
-    'sys.stdout = real',
-    "loaded = ns.get('SIGNALS_LOADED')",
-    "if job.get('commands') is not None:",
-    "    ns['load_signals']()",
-    "print(json.dumps({'classified': [ns['classify_command'](c, job.get('cwd')) for c in job.get('commands') or []],",
-    "                  'prefilter': [ns['might_signal'](c) for c in job.get('commands') or []],",
-    "                  'loaded': loaded}))",
-  ].join('\n')
-
+describe('agent-tracker.mjs: signals', () => {
   function drive(job: Record<string, unknown>) {
-    const out = execFileSync('python3', ['-I', '-c', DRIVER], {
-      input: JSON.stringify({ src: PYTHON, ...job }),
-      encoding: 'utf8',
-      env: { ...process.env, AGENT_OFFICE_HOME: NO_MARKER_HOME },
-    })
-    return JSON.parse(out) as { classified: Array<Array<Record<string, unknown>>>; prefilter: boolean[]; loaded: boolean }
+    resetSignals() // the hook runs once per process; here many hooks share one
+    buildEvent(JSON.stringify(job.payload ?? { tool_name: 'x' }), { ...process.env, AGENT_OFFICE_HOME: NO_MARKER_HOME })
+    const loaded = signalsLoaded()
+    const commands = job.commands as string[] | undefined
+    if (commands !== undefined) loadSignals()
+    const cwd = job.cwd as string | undefined
+    return {
+      classified: (commands ?? []).map(c => classifyCommand(c, cwd)) as Array<Array<Record<string, unknown>>>,
+      prefilter: (commands ?? []).map(c => mightSignal(c)),
+      loaded,
+    }
   }
 
   /** command -> what classify_command returns for it (cwd /home/me/api) */
@@ -1731,7 +1876,7 @@ describe('agent-tracker.sh: signals', () => {
       expect(pre(wt)).toEqual([{ kind: 'push', target: 'wt', branch: 'feature/signals', toDefault: false, command: 'git push' }])
       // Detached HEAD: a push, nothing said about the branch
       writeFileSync(join(repo, '.git', 'HEAD'), '4f449fe0c1a1d1d6c3d13d5b9e1c0e7a7c1ab0f2\n')
-      expect(pre(repo)).toEqual([{ kind: 'push', target: repo.split('/').pop(), command: 'git push' }])
+      expect(pre(repo)).toEqual([{ kind: 'push', target: repo.split(/[\\/]/).pop(), command: 'git push' }])
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
@@ -1755,5 +1900,415 @@ describe('agent-tracker.sh: signals', () => {
     expect(runHook(bash(`fly deploy -a ${'x'.repeat(300)}`, { hook_event_name: 'PreToolUse' }))?.signals[0].target).toHaveLength(80)
     // An unbalanced quote: shlex gives up, the plain split still finds the test run
     expect(runHook(bash('npm test -- -t "unterminated', { hook_event_name: 'PreToolUse' }))?.signals?.[0]).toMatchObject({ kind: 'test_start' })
+  })
+})
+
+/**
+ * Python behaviours the port keeps on purpose. Every expectation here (apart
+ * from the Windows-path group) is what the Python this hook replaced produced
+ * for the same payload: they were compared one by one in a differential run
+ * before it was deleted. Each one is a place where the obvious JS spelling
+ * (`||`, String(), .slice, \b, JSON.stringify) gives another answer.
+ */
+describe('agent-tracker.mjs: Python semantics the port keeps', () => {
+  const S = { session_id: 's1', cwd: '/home/me/proj', transcript_path: '/t/s1.jsonl' }
+  const tailOf = { sessionId: 's1', project: 'proj', cwd: '/home/me/proj', transcriptPath: '/t/s1.jsonl' }
+  const ev = (o: Record<string, unknown>) => runHook({ ...S, ...o })
+  const agent = (input: unknown, extra: Record<string, unknown> = {}) =>
+    ev({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: input, ...extra })?.agent
+  const working = (tool_name: unknown, tool_input: unknown, extra: Record<string, unknown> = {}) =>
+    ev({ hook_event_name: 'PreToolUse', tool_name, tool_input, ...extra })
+
+  it('`x or default`: [] {} 0 and "" are unset, as in Python (not as in JS)', () => {
+    expect(agent({ description: [], prompt: 'Write tests for the parser', subagent_type: 'general-purpose' })).toMatchObject({ role: 'test-engineer', task: 'Write tests for the parser' })
+    expect(agent({ description: {}, prompt: 'Fix the crash in login' })).toMatchObject({ role: 'debugger', task: 'Fix the crash in login' })
+    expect(agent({ description: 0, prompt: 'review the diff' })).toMatchObject({ role: 'code-reviewer', task: 'review the diff' })
+    expect(agent({ subagent_type: [], agent_type: 'debugger', description: 'x' })).toMatchObject({ role: 'debugger', agentType: 'debugger' })
+    expect(agent(0)).toMatchObject({ task: 'Working on task' })
+    expect(agent({ description: 'x' }, { tool_use_id: [] })?.id).toMatch(/^agent-general-purpose-\d+$/)
+    expect(ev({ hook_event_name: 'SessionStart', source: [], model: 0, session_title: [] })).toEqual({ type: 'session_started', source: 'startup', ...tailOf })
+    expect(ev({ hook_event_name: 'SubagentStop', agent_id: 'a', agent_type: 'x', last_assistant_message: 0 })?.result).toBe('done')
+    expect(ev({ hook_event_name: 'StopFailure', error: 0, error_details: [], last_assistant_message: {} })).toMatchObject({ error: 'unknown', detail: '' })
+    expect(ev({ hook_event_name: 'PostCompact', trigger: 0 })?.trigger).toBe('manual')
+    expect(working('Skill', { skill: 0 })?.status).toBe('using /skill')
+    // only None is "nothing" for clamp(): False and 0 are text
+    expect(ev({ hook_event_name: 'Stop', last_assistant_message: false })?.text).toBe('False')
+    expect(ev({ hook_event_name: 'Stop', last_assistant_message: 0, stop_hook_active: [], session_crons: [1] })).toMatchObject({ text: '0', stopHookActive: false, crons: 1 })
+    expect(ev({ hook_event_name: 'TaskCreated', task_id: 0, task_subject: 'x' })?.taskId).toBe('0')
+    expect(ev({ hook_event_name: 'TaskCreated', task_id: false })?.taskId).toBe('False')
+  })
+
+  it('str() of True / None / floats / lists / dicts is Python\'s spelling', () => {
+    expect(ev({ hook_event_name: 'SessionStart', model: true, session_title: 1.5 })).toMatchObject({ model: 'True', title: '1.5' })
+    expect(ev({ hook_event_name: 'SessionEnd', reason: ['a', null, true, 1.5, "it's", { k: 'v"x' }, [], {}, -0.5, 1e-7, 2e20] }))
+      .toMatchObject({ reason: `['a', None, True, 1.5, "it's", {'k': 'v"x'}, [], {}, -0.5, 1e-07, 200000000000000000000]` })
+    expect(ev({ hook_event_name: 'SessionEnd', reason: { 'a b': 'q\'"', n: null, 'caf\u00e9': 'x\ny\t\x01' } }))
+      .toMatchObject({ reason: String.raw`{'a b': 'q\'"', 'n': None, 'café': 'x\ny\t\x01'}` })
+    expect(ev({ hook_event_name: 'SessionEnd', reason: ["a'b", 'a"b', 'a\'"b', 'a\\b', 'x\n', '\x7f', '\u00e9', '\u{2028}', '\u{a0}', '\u{200b}', '\u{1F600}', '\u{10FFFF}'] }))
+      .toMatchObject({ reason: String.raw`["a'b", 'a"b', 'a\'"b', 'a\\b', 'x\n', '\x7f', 'é', '\u2028', '\xa0', '\u200b', '😀', '\U0010ffff']` })
+    expect(ev({ hook_event_name: 'SubagentStop', agent_id: 5, agent_type: 'x', last_assistant_message: ['a'] })).toMatchObject({ agentId: '5', result: "['a']" })
+    expect(ev({ hook_event_name: 'StopFailure', error: 'rate_limit', error_details: { a: 1 } })?.detail).toBe("{'a': 1}")
+    expect(ev({ hook_event_name: 'PreCompact', trigger: ['x'] })?.trigger).toBe("['x']")
+    expect(ev({ hook_event_name: 'TaskCreated', task_id: 1.5, task_subject: ['a'] })).toMatchObject({ taskId: '1.5', subject: "['a']" })
+    expect(ev({ hook_event_name: 'Notification', notification_type: ['idle_prompt'] })).toBeNull()
+    expect(working('Skill', { skill: true })?.status).toBe('using /True')
+    expect(working('Skill', { skill: ['a', 1] })?.status).toBe("using /['a', 1]")
+    expect(working('Grep', { pattern: 5 })?.status).toBe("searching for '5'")
+    expect(working('Bash', { command: ['x'] })?.status).toBe("running: ['x']")
+    expect(working('Read', { file_path: 5 })?.status).toBe('reading 5')
+    const post = (tool_response: unknown) => ev({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: {}, tool_response })?.result
+    expect(post({ content: [1, null, true, 2.5, ['x', 1], { text: null }, { text: 'ok' }, 'str', { a: 1 }, 1e-7, 0.1, 1e22] })).toBe('1 None True 2.5 [\'x\', 1] None ok str  1e-07 0.1 1e+22')
+    expect(post({ output: { a: "it's", b: [1, 2.5, null] } })).toBe(`{'a': "it's", 'b': [1, 2.5, None]}`)
+    expect(post({ result: null })).toBe('None')
+    expect(post({ content: 'plain text' })).toBe('plain text')
+    expect(post('not json')).toBe('not json')
+    expect(post('[1]')).toBe('[1]')
+    expect(post(5)).toBe('done')
+    expect(post(null)).toBe('done')
+  })
+
+  it('[:n] counts code points, not UTF-16 units', () => {
+    const smile = '\u{1F600}'
+    expect(ev({ hook_event_name: 'SubagentStop', agent_id: 'a', agent_type: 'x', last_assistant_message: smile.repeat(200), agent_transcript_path: smile.repeat(500) }))
+      .toMatchObject({ result: smile.repeat(120), agentTranscriptPath: smile.repeat(400) })
+    expect(ev({ hook_event_name: 'SessionStart', session_title: smile.repeat(200) })?.title).toBe(smile.repeat(120))
+    expect(agent({ description: smile.repeat(100), subagent_type: 'debugger' })?.task).toBe(smile.repeat(80))
+    expect(working('Grep', { pattern: smile.repeat(50) })?.status).toBe(`searching for '${smile.repeat(30)}'`)
+    expect(working('Bash', { command: smile.repeat(100) })?.status).toBe(`running: ${smile.repeat(60)}`)
+    expect(ev({ hook_event_name: 'PostModelSwitch', to_model: 'b'.repeat(100), from_model: 5, source: 's'.repeat(40) })).toMatchObject({ model: 'b'.repeat(80), switchSource: 's'.repeat(20) })
+    expect(ev({ hook_event_name: 'PostModelSwitch', to_model: 'b', from_model: 5 })).not.toHaveProperty('fromModel')
+  })
+
+  it('int(): floats truncate, negatives and bools drop out, strings do not count', () => {
+    const resp = (tool_response: unknown) => ev({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: {}, tool_response })
+    expect(resp({ status: 'completed', totalTokens: 12.9, totalDurationMs: '5', totalToolUseCount: true, resolvedModel: 'm'.repeat(100) }))
+      .toMatchObject({ tokens: 12, model: 'm'.repeat(80) })
+    expect(resp({ status: 'completed', totalTokens: 12.9, totalDurationMs: '5', totalToolUseCount: true })).not.toHaveProperty('durationMs')
+    expect(resp({ status: 'completed', totalTokens: 12.9, totalDurationMs: '5', totalToolUseCount: true })).not.toHaveProperty('toolUses')
+    const zero = resp({ status: 'completed', totalTokens: 0, totalDurationMs: -1, totalToolUseCount: 3.0, resolvedModel: '' })
+    expect(zero).toMatchObject({ tokens: 0, toolUses: 3 })
+    expect(zero).not.toHaveProperty('durationMs')
+    expect(zero).not.toHaveProperty('model')
+    expect(resp({ status: 'completed', totalTokens: 1e15, totalDurationMs: 123456789012 })).toMatchObject({ tokens: 1000000000000000, durationMs: 123456789012 })
+    // an exit code that is "digits" to str.isdigit() but not to int() loses the signals, never the event
+    const fail = (error: string) => ev({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'npm test' }, error })
+    expect(fail('Exit code \u{b2}\nboom')).not.toHaveProperty('signals')
+    expect(fail('Exit code \u{b2}\nboom')?.status).toBe('failed: Bash — Exit code ² boom')
+    expect(fail('Exit code \u{663}\nFAIL x')?.signals).toEqual([{ kind: 'test_failed', target: 'proj', command: 'npm test', error: 'FAIL x', exitCode: 3, detail: 'FAIL x' }])
+    expect(fail('Exit code  7 \nfoo')?.signals?.[0]).toMatchObject({ exitCode: 7 })
+    for (const odd of ['Exit code 12abc\nfoo', 'Exit code 1_0\nx', 'Exit code +3\nx']) expect(fail(odd)?.signals?.[0]).not.toHaveProperty('exitCode')
+  })
+
+  it('which payloads Python would have crashed on give nothing, not a half event', () => {
+    expect(agent({ subagent_type: ['x'], description: 'x' })).toBeUndefined() // unhashable dict key
+    expect(agent({ description: 5 })).toBeUndefined() // 5.lower() / 5[:80]
+    expect(agent({ description: 5, subagent_type: 'debugger' })).toBeUndefined()
+    expect(agent({ description: ['a', 'b'] })).toBeUndefined() // a list has no .lower()
+    expect(agent({ description: true, subagent_type: 'debugger' })).toBeUndefined()
+    expect(agent([1])).toBeUndefined() // a list has no .get()
+    expect(agent('abc')).toBeUndefined()
+    // …but a list is sliceable, so with a role that needs no .lower() it is the task
+    expect(agent({ description: ['a', 'b'], subagent_type: 'debugger' })).toMatchObject({ role: 'debugger', task: ['a', 'b'] })
+    expect(agent({ description: 'x', subagent_type: 5 })).toMatchObject({ role: 'general-purpose', agentType: 5 })
+    expect(working(5, {})).toBeNull() // 5.startswith
+    expect(working(['Bash'], {})).toBeNull()
+    expect(working(true, {})).toBeNull()
+    expect(working('Read', { file_path: 'x' }, { agent_id: 'a', agent_type: ['t'] })).toBeNull()
+    expect(working('Read', { file_path: 'x' }, { agent_id: 'a', agent_type: 5 })).toMatchObject({ agentType: 5, role: 'general-purpose', name: 'Agent' })
+    expect(working('Read', { file_path: 'x' }, { agent_id: 'a', agent_type: [] })).toMatchObject({ agentType: 'general-purpose' })
+    // a name that is a property of every JS object is just a name
+    for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) expect(working(name, {})).toMatchObject({ status: `using ${name}`, tool: name })
+    expect(working('Read', 'abc')).toMatchObject({ status: 'reading ' })
+    expect(working('Read', [1, 2])).toMatchObject({ status: 'reading ' })
+    expect(ev({ hook_event_name: 'PostToolUse', tool_name: 'SubagentHandback', tool_input: 'abc', tool_response: 'text' })).toBeNull()
+    expect(ev({ hook_event_name: 'PostToolUse', tool_name: 'SubagentHandback', agent_id: 'q', tool_input: 5, tool_response: 'text' })).toMatchObject({ agentId: 'q', result: 'text' })
+  })
+
+  it('Python whitespace: str.split() breaks on \\x1c-\\x1f and \\x85 but not on U+FEFF', () => {
+    const note = (message: string) => ev({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message })?.message
+    expect(note('a\x85b\u{feff}c\x1cd  e\u{a0}f\u{2003}g')).toBe('a b\u{feff}c d e f g')
+    expect(ev({ hook_event_name: 'Stop', background_tasks: [{ id: 1, type: null, status: true, description: ' a \n b\x85c\u{feff}d\x1ce ' }, 'x', 5, { id: 1.5 }, {}, []] })?.backgroundTasks)
+      .toEqual([{ id: '1', type: '', status: 'True', description: 'a b c\u{feff}d e' }, { id: '1.5', type: '', status: '', description: '' }, { id: '', type: '', status: '', description: '' }])
+  })
+
+  it('the \\b of the role hints is Unicode-aware: a word glued to a letter, digit or underscore is not the hint word', () => {
+    const role = (description: string) => agent({ description })?.role
+    expect(role('spec')).toBe('test-engineer')
+    expect(role('SPEC')).toBe('test-engineer')
+    expect(role('a\u{a0}bug')).toBe('debugger')
+    expect(role('caf\u{e9} review')).toBe('code-reviewer')
+    for (const glued of ['\u{e9}spec', '_spec', 'inspect', 'test\u{e9}', 'review\u{661}', 'sec\u{fc}rity']) expect(role(glued), glued).toBe('general-purpose')
+  })
+
+  it('re.M and re.I the Python way: ^ sees only \\n, . takes \\r, \\d takes any digit, the match is case-insensitive', () => {
+    const out = (stdout: string, command = 'npm test | cat') => ev({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_response: { stdout, stderr: '' } })
+    const sig = (stdout: string, command?: string) => out(stdout, command)?.signals?.[0]
+    expect(sig('BUILD FAILED', 'npm run build | cat')).toMatchObject({ kind: 'build_failed' })
+    expect(sig('x\nERROR in a', 'npm run build | cat')).toMatchObject({ kind: 'build_failed' })
+    expect(out('x\rERROR in a', 'npm run build | cat')).not.toHaveProperty('signals') // \r is not a line start to Python
+    expect(out('x\u{2028}ERROR in a', 'npm run build | cat')).not.toHaveProperty('signals')
+    expect(out('a\rFAIL b')).not.toHaveProperty('signals')
+    expect(sig('a\n  FAIL b: it broke\nc')).toMatchObject({ kind: 'test_failed', detail: 'FAIL b: it broke' })
+    expect(sig('FAIL b\r\nc')).toMatchObject({ detail: 'FAIL b' }) // . takes the \r that JS would stop at
+    expect(sig('1\u{663} failed')).toMatchObject({ kind: 'test_failed', detail: '1\u{663} failing' })
+    expect(out('\u{663} failed')).not.toHaveProperty('signals') // [1-9] stays ASCII
+    expect(sig('\u{1b}[31m2 failed\u{1b}[0m')).toMatchObject({ detail: '2 failing' }) // colour codes removed first
+    expect(sig('\u{1b}[1;31;m3 failing\u{1b}[K')).toMatchObject({ detail: '3 failing' })
+    expect(sig('--- FAIL: A\n--- FAIL: B\n--- FAIL: C', 'go test ./... | cat')).toMatchObject({ detail: '3 failing' })
+    expect(sig('--- FAIL: A', 'go test ./... | cat')).toMatchObject({ detail: '1 failing' })
+    expect(sig('error TS1\nerror TS2\nerror TS3', 'npm run build | cat')).toMatchObject({ detail: '3 errors' })
+    expect(sig('Found 1 error in x', 'npm run build | cat')).toMatchObject({ detail: '1 error' })
+    expect(out('Found \u{662} errors', 'npm run build | cat')).not.toHaveProperty('signals')
+    expect(sig('ok  \tpkg\t0.1s')).toMatchObject({ kind: 'test_ok' })
+    expect(out('\u{662}\u{662} passed')).not.toHaveProperty('signals')
+    expect(sig('Deployment to prod FAILED', 'vercel deploy --prod | cat')).toMatchObject({ kind: 'deploy_fail' })
+    expect(out(`deploy ${'x'.repeat(41)} failed`, 'vercel deploy --prod | cat')).not.toHaveProperty('signals') // [^\n]{0,40}
+    // splitlines() breaks on more than \n when the first meaningful line of an error is picked
+    const err = (error: string) => ev({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'npm test' }, error })?.signals?.[0]?.error
+    expect(err('Exit code 1\r\n\u{1c}foo failed')).toBe('foo failed')
+    expect(err('Exit code 1\n\u{85}meh\u{85}an error here')).toBe('an error here')
+    expect(err('Exit code 1\n\n  \n!!!\nreal line failed')).toBe('real line failed')
+    expect(err('Exit code 1\n\u{2460}\n\u{e9}')).toBe('\u{2460}')
+    expect(err('Exit code 1\nfirst\nsecond is fatal\nthird')).toBe('second is fatal')
+    expect(err('Exit code 5\n')).toBe('exit code 5')
+  })
+
+  // The classifier on quoting, escapes, redirections, comments and directories. Expected values: the Python's.
+  const SHELL: Array<[string, Array<Record<string, unknown>>]> = [
+    ["npm 'run' \"build\"", [{ kind: 'build' }]],
+    ['npm run "bu"ild', [{ kind: 'build' }]],
+    [String.raw`npm run "buil\"d"`, []],
+    [String.raw`npm run "bui\ld"`, []],
+    ['echo "npm test"', []],
+    [String.raw`npm\ test`, []],
+    [String.raw`vercel\ deploy`, []],
+    ['npm test\\', []],
+    ["npm run 'build", []],
+    ['FOO="a b" npm test', [{ kind: 'test' }]],
+    ['npm test # && vercel deploy --prod', [{ kind: 'test' }]],
+    ['npm test#x', []],
+    ['npm test &> out.log', [{ kind: 'test' }]],
+    ['npm test 2>&1 >out', [{ kind: 'test' }]],
+    ['npm test >&2', [{ kind: 'test' }]],
+    ['npm test & npm run build', [{ kind: 'test' }, { kind: 'build' }]],
+    ["cd 'my app' && npm test", [{ kind: 'test', target: 'my app' }]],
+    ['cd .. && cd .. && npm test', [{ kind: 'test', target: 'home' }]],
+    ['cd /a/b && cd ../c && vercel deploy --prod', [{ kind: 'deploy', target: 'c' }]],
+    ['(npm test)', [{ kind: 'test' }]],
+    ['{ npm test; }', [{ kind: 'test' }]],
+    ['! npm test', [{ kind: 'test' }]],
+    ['echo $(npm test) && npm run build', [{ kind: 'build' }]],
+    ['echo "$(npm test)" && npm run build', [{ kind: 'build' }]],
+    ['echo `npm test`', []],
+    ["cat <<< 'x' && npm test", [{ kind: 'test' }]],
+    ['npm test\nnpm run build', [{ kind: 'test' }, { kind: 'build' }]],
+    ['git -C web push origin main', [{ kind: 'push', target: 'web', branch: 'main', toDefault: true }]],
+    ['git push origin +main', [{ kind: 'push', branch: 'main', toDefault: true }]],
+    ['git push origin main:prod', [{ kind: 'push', branch: 'prod', toDefault: false }]],
+    ['git push origin :old', [{ kind: 'push', branch: 'old', toDefault: false }]],
+    ['git push origin v2.0 main', [{ kind: 'deploy' }, { kind: 'push', branch: 'main', toDefault: true }]],
+    ['git push -o ci.skip origin main', [{ kind: 'push', branch: 'main', toDefault: true }]],
+    ['git push origin HEAD --tags', [{ kind: 'deploy' }, { kind: 'push' }]],
+    ['npm run build.x', [{ kind: 'build' }]],
+    ['npm run build-x', [{ kind: 'build' }]],
+    ['npm run buildx', []],
+    ['npm run test_x', [{ kind: 'test' }]],
+    ['pnpm workspace web build', [{ kind: 'build', target: 'web' }]],
+    ['pnpm --filter ./pkg build', [{ kind: 'build', target: 'pkg' }]],
+    ['make -j4 deploy', [{ kind: 'deploy' }]],
+    ['make CC=gcc', [{ kind: 'build' }]],
+    ['docker push a:5000/b:1', [{ kind: 'deploy', target: 'b' }]],
+    ['docker push dir/x.yaml', [{ kind: 'deploy', target: 'dir' }]],
+    ['terraform -chdir=a/b apply', [{ kind: 'deploy', target: 'b' }]],
+    ['vercel pull --prod', []],
+    ['vercel --scope team deploy --prod', [{ kind: 'deploy' }]],
+    ['tsc --watch', []],
+    ['webpack serve', []],
+    ['vitest list', []],
+    ['python3.12 -m pytest', [{ kind: 'test' }]],
+    ['python -m http.server', []],
+    ['sudo env FOO=1 timeout 5 npm test', [{ kind: 'test' }]],
+    ['timeout -k 3 5 npm test', [{ kind: 'test' }]],
+    ['FOO=1', []],
+    ['\u{e9}x=1 npm test', [{ kind: 'test' }]], // a Unicode identifier is an assignment (str.isidentifier)
+    ['1x=1 npm test', []],
+    ['npm\u{a0}test', []], // shlex splits on ASCII blanks only
+    ['npm\u{3000}test', []],
+    ['npm\ttest', [{ kind: 'test' }]],
+  ]
+  it('classify_command: shlex quoting and escapes, redirections, comments, subshells, cd and git push refspecs', () => {
+    resetSignals()
+    loadSignals()
+    expect(SHELL.map(([command]) => [command, classifyCommand(command, '/home/me/api')])).toEqual(SHELL)
+  })
+
+  it('call_key: sha256 of the tool name, NUL and the input as Python\'s json.dumps(sort_keys, compact, ensure_ascii=False) wrote it', () => {
+    const key = (tool_name: unknown, tool_input: unknown) => ev({ hook_event_name: 'PermissionRequest', tool_name, tool_input })?.callKey
+    // golden values, produced by the Python
+    expect(key('Bash', { command: 'ls', description: 'd' })).toBe('cb05f9de67d5c4a3')
+    expect(key('Bash', { command: 'echo caf\u{e9} \u{1F600}', 'z\u{e9}': 1 })).toBe('f1d01d77ad29e220')
+    // keys sort by code point (U+FFFF before U+1F600, where UTF-16 order says the reverse), "10" before "9", "" first
+    expect(key('X', { b: 1, a: { d: 1, c: [3, 2, 1] }, '\u{1F600}': 1, '\u{ffff}': 2, '\u{e9}': 3, '': 4, A: 5, '10': 6, '9': 7 })).toBe('6298ff64f551c17c')
+    expect(key('X', { v: '\x00\x01\x08\x09\x0a\x0c\x0d\x1f\x7f"\\/', k: 1 })).toBe('99f9d4a92aa0dc22')
+    expect(key('X', { a: 2.5, b: -0.5, c: 1e-7, d: 123456789, e: 0.1, f: 1e21, g: 1.5e300, h: -3, i: 5e-324, j: 0.00001, k: 123456789012345680000 })).toBe('3a2ab5995806ec57')
+    expect(key('X', null)).toBe('bf89b999b52e2fe6')
+    expect(key('X', undefined)).toBe('bf89b999b52e2fe6')
+    expect(key('X', 'abc')).toBe('cd9c2884ae94272d')
+    expect(key('X', [1, 'a', null, true])).toBe('39b9897736899a87')
+    expect(key('X', {})).toBe('b2e25f07caa3b6be')
+    expect(key('T\u{e9}\u{1F600}', { a: 1 })).toBe('d86c2eee0dee1272')
+    expect(key(0, { a: 1 })).toBe('f30a8adb0ecc8695') // str(0 or 'tool') is "tool"
+    expect(key(null, {})).toBe('cea28cfd1128c5c2') // str(None or 'tool')
+    expect(key(['a'], { a: 1 })).toBe('c51b1385a603f6c6') // "['a']"
+    expect(key(true, {})).toBe('ab5b810c0c257189') // "True"
+    // lone surrogates are encoded as "?" (errors='replace'), not as U+FFFD
+    const lone = '{"session_id":"s1","hook_event_name":"PermissionRequest","tool_name":"X","tool_input":{"a":"\\ud800","b":"\\udc00x","c":"\\ud83d\\ude00"}}'
+    expect(runHook(lone)?.callKey).toBe('9016b5f9e2124c88')
+    // the same hash on the PostToolUse of an MCP call, nested keys sorted
+    expect(ev({ hook_event_name: 'PostToolUse', tool_name: 'mcp__srv__tool', tool_input: { a: 1 }, agent_id: 'w1' })).toMatchObject({ type: 'mcp_done', server: 'srv', tool: 'tool', callKey: '6361da2219db6c78', agentId: 'w1' })
+    expect(ev({ hook_event_name: 'PostToolUseFailure', tool_name: 'mcp__srv__tool', tool_input: { b: [1, { z: 1, a: 2 }] } })?.callKey).toBe('a1803ab5b06e776a')
+  })
+
+  it('the event keeps Python\'s key order (the JSON the server sees is canonical in it)', () => {
+    const keys = (o: Record<string, unknown> | null) => Object.keys(o ?? {})
+    expect(keys(working('Read', { file_path: '/x/y.ts' }, { agent_id: 'sub1', agent_type: 'Explore', prompt_id: 'p9' })))
+      .toEqual(['type', 'status', 'tool', 'agentId', 'agentType', 'role', 'name', 'sessionId', 'project', 'cwd', 'transcriptPath'])
+    expect(keys(ev({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' }, agent_id: 'w', prompt_id: 'p9', tool_response: { stdout: '' } })))
+      .toEqual(['type', 'toolName', 'callKey', 'signals', 'agentId', 'promptId', 'sessionId', 'project', 'cwd', 'transcriptPath'])
+    expect(keys(agent({ description: 'x' }, { agent_id: 'sub1' }))).toEqual(['id', 'name', 'role', 'task', 'agentType', 'background', 'parentSubagentId'])
+    expect(keys(ev({ hook_event_name: 'UserPromptSubmit', prompt: '<task-notification><task-id>t1</task-id><status>done</status><summary> a  b </summary></task-notification>', prompt_id: 'p' })))
+      .toEqual(['type', 'text', 'isWakeup', 'wakeupAgentId', 'wakeupStatus', 'promptId', 'sessionId', 'project', 'cwd', 'transcriptPath'])
+    // a cwd event brings its own cwd and project, ahead of the session defaults
+    expect(keys(ev({ hook_event_name: 'CwdChanged', new_cwd: '/a/b/', old_cwd: '/o' }))).toEqual(['type', 'cwd', 'project', 'oldCwd', 'sessionId', 'transcriptPath'])
+    const home = mkdtempSync(join(tmpdir(), 'agent-office-keys-'))
+    writeFileSync(join(home, 'answer-permissions'), 'on\n')
+    try {
+      const line = runHookLines({ ...S, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' }, prompt_id: 'p' }, { AGENT_OFFICE_HOME: home })[0]
+      expect(keys(JSON.parse(line))).toEqual(['type', 'kind', 'toolName', 'summary', 'callKey', 'answerable', 'permissionMode', 'suggestions', 'detail', 'nonce', 'promptId', 'sessionId', 'project', 'cwd', 'transcriptPath'])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+    // without a tool_use_id the agent id carries a number, new on every run (Python used id(d))
+    const ids = [agent({ description: 'x' }, { tool_use_id: undefined })?.id, agent({ description: 'x' }, { tool_use_id: undefined })?.id]
+    expect(ids[0]).toMatch(/^agent-general-purpose-\d{10,}$/)
+    expect(ids[0]).not.toBe(ids[1])
+  })
+
+  it('suggestions are bounded but keep their shape: 8 items, 12 keys, 40-char keys, 200-char strings, 3 levels deep', () => {
+    const home = mkdtempSync(join(tmpdir(), 'agent-office-sugg-'))
+    writeFileSync(join(home, 'answer-permissions'), 'on\n')
+    try {
+      const suggestions = (permission_suggestions: unknown) => JSON.parse(runHookLines({ ...S, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' }, permission_suggestions }, { AGENT_OFFICE_HOME: home })[0]).suggestions
+      const [one] = suggestions([{ a: 'x'.repeat(300), b: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], c: { d: { e: { f: 1 } } }, g: 1.5, h: null, i: true, j: Object.fromEntries(Array.from({ length: 15 }, (_, i) => ['k' + i, i])) }, 5, 'x', null, [1]])
+      expect(Object.keys(one)).toEqual(['a', 'b', 'c', 'g', 'h', 'i', 'j'])
+      expect(one.a).toBe('x'.repeat(200))
+      expect(one.b).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+      expect(one.c).toEqual({ d: { e: null } }) // depth 3 and below is None
+      expect(one).toMatchObject({ g: 1.5, h: null, i: true })
+      expect(Object.keys(one.j)).toHaveLength(12)
+      expect(suggestions([{ a: [[[1]], [{ x: 1 }], { y: [1] }, [[]], 'ok'] }])).toEqual([{ a: [[null], [null], { y: null }, [null], 'ok'] }])
+      expect(suggestions('abc')).toEqual([])
+      const long = suggestions([{ ['k'.repeat(60)]: 1, ['\u{1F600}'.repeat(50)]: 2 }])[0]
+      expect(Object.keys(long)).toEqual(['k'.repeat(40), '\u{1F600}'.repeat(40)])
+      // '__proto__' is a key like any other
+      expect(suggestions(JSON.parse('[{"__proto__": {"x": 1}, "a": 2}]'))[0]).toEqual(JSON.parse('{"__proto__": {"x": 1}, "a": 2}'))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('background / SubagentHandback / failure edge payloads', () => {
+    const post = (tool_response: unknown, extra: Record<string, unknown> = {}) =>
+      ev({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { description: 'x' }, tool_response, ...extra })
+    expect(post('{"status": "async_launched", "agentId": "abc"}')).toMatchObject({ type: 'agent_linked', subagentId: 'abc' })
+    expect(post({ status: 'async_launched', agent_id: 'abc' })).toMatchObject({ type: 'agent_linked', subagentId: 'abc' })
+    expect(post({ status: 'async_launched', agentId: 5 })).toMatchObject({ type: 'agent_linked', subagentId: '5' })
+    expect(post({ status: 'async_launched' })).toBeNull()
+    expect(post({ status: 'running' }, { tool_input: { run_in_background: true } })).toBeNull()
+    expect(post({ status: 'running' }, { tool_input: { run_in_background: [0] } })).toBeNull()
+    expect(post({ status: 'completed', content: 'x' }, { tool_input: { run_in_background: true } })).toMatchObject({ type: 'agent_completed', result: 'x' })
+    expect(post(undefined, { hook_event_name: 'PostToolUseFailure', error: ' a \n\n b ' })?.result).toBe('failed: a b')
+    expect(post(undefined, { hook_event_name: 'PostToolUseFailure', error: 0 })?.result).toBe('failed: unknown error')
+    expect(post(undefined, { hook_event_name: 'PostToolUseFailure', error: ['a', 1] })?.result).toBe("failed: ['a', 1]")
+    expect(post(undefined, { hook_event_name: 'PostToolUseFailure', error: 'x', tool_use_id: '' })).toBeNull()
+    const handback = (extra: Record<string, unknown>) => ev({ hook_event_name: 'PostToolUse', tool_name: 'SubagentHandback', ...extra })
+    expect(handback({ tool_input: { agentId: 'h1' }, tool_response: { result: 'r' } })).toMatchObject({ agentId: 'h1', result: 'r' })
+    expect(handback({ tool_input: [], tool_response: '{"agent_id": 7}' })).toMatchObject({ agentId: '7', result: '{"agent_id": 7}' })
+    expect(handback({ tool_input: {}, tool_response: {} })).toBeNull()
+  })
+
+  it('signals on odd shapes: tool_response of any type, interrupted only when exactly true, cwd of any type', () => {
+    const bash = (extra: Record<string, unknown>, command: unknown = 'npm test | cat') =>
+      ev({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_1', ...extra })
+    expect(bash({ tool_response: 'FAIL x\nfoo' })?.signals).toEqual([{ kind: 'test_failed', target: 'proj', command: 'npm test | cat', detail: 'FAIL x' }])
+    expect(bash({ tool_response: ['3 failed'] })?.signals?.[0]).toMatchObject({ detail: '3 failing' })
+    for (const odd of [12, null, { stdout: null, stderr: 5 }]) expect(bash({ tool_response: odd })).not.toHaveProperty('signals')
+    expect(bash({ tool_response: { stdout: '', interrupted: true } }, 'npm test')?.signals).toEqual([{ kind: 'test_failed', target: 'proj', command: 'npm test', interrupted: true }])
+    expect(bash({ tool_response: { stdout: '', interrupted: 1 } }, 'npm test')?.signals).toEqual([{ kind: 'test_ok', target: 'proj', command: 'npm test' }])
+    for (const command of [5, null, '', ['npm test']]) expect(bash({ tool_response: { stdout: 'x' } }, command)).not.toHaveProperty('signals')
+    // no session id: the signals go out alone, tagged with the worker
+    expect(bash({ session_id: undefined, agent_id: 'w', agent_type: 'Explore', tool_response: { stdout: '' } }, 'npm test'))
+      .toEqual({ type: 'signal', signals: [{ kind: 'test_ok', target: 'proj', command: 'npm test' }], agentId: 'w', agentType: 'Explore', role: 'Explore', name: 'Explorer', cwd: '/home/me/proj', project: 'proj', transcriptPath: '/t/s1.jsonl' })
+    // cwd: the target comes from it, or from the session's project when it is not a path
+    const pre = (cwd: unknown, command = 'npm test') => ev({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd })?.signals
+    expect(pre('/')).toEqual([{ kind: 'test_start', target: '/', command: 'npm test' }])
+    expect(pre(5)).toEqual([{ kind: 'test_start', command: 'npm test' }])
+    expect(pre('')).toEqual([{ kind: 'test_start', command: 'npm test' }])
+    expect(pre('/home/me/api', 'cd /srv/app && vercel deploy --prod')).toEqual([{ kind: 'deploy_start', target: 'app', command: 'cd /srv/app && vercel deploy --prod' }])
+  })
+})
+
+/**
+ * Windows. Claude Code reports cwd and file paths with backslashes there, and
+ * the Python only ever split on "/" (it ran under bash): a project came out as
+ * the whole path and a Bash target as "C". This is new behaviour, not parity.
+ */
+describe('agent-tracker.mjs: Windows paths', () => {
+  const CWD = 'C:\\Users\\me\\proj'
+  const win = { session_id: 's1', cwd: CWD, transcript_path: 'C:\\Users\\me\\.claude\\s1.jsonl' }
+  const ev = (o: Record<string, unknown>) => runHook({ ...win, ...o })
+
+  it('project is the last segment of a Windows cwd (either slash, trailing slash or not)', () => {
+    expect(ev({ hook_event_name: 'Stop' })).toMatchObject({ project: 'proj', cwd: CWD, transcriptPath: 'C:\\Users\\me\\.claude\\s1.jsonl' })
+    expect(ev({ hook_event_name: 'Stop', cwd: 'C:\\Users\\me\\proj\\' })?.project).toBe('proj')
+    expect(ev({ hook_event_name: 'Stop', cwd: 'C:/Users/me/proj' })?.project).toBe('proj')
+    expect(ev({ hook_event_name: 'Stop', cwd: 'C:\\Users\\me/proj\\\\' })?.project).toBe('proj')
+    expect(ev({ hook_event_name: 'Stop', cwd: '\\\\server\\share\\proj' })?.project).toBe('proj')
+    // a drive root is named by its drive; nothing left of "/" gives the cwd itself
+    expect(ev({ hook_event_name: 'Stop', cwd: 'C:\\' })?.project).toBe('C:')
+    expect(ev({ hook_event_name: 'Stop', cwd: '/' })?.project).toBe('/')
+    expect(ev({ hook_event_name: 'CwdChanged', new_cwd: 'D:\\work\\api', old_cwd: CWD })).toMatchObject({ cwd: 'D:\\work\\api', project: 'api', oldCwd: CWD })
+  })
+
+  it('a file tool shows the file name, whichever slash the path uses', () => {
+    const read = (file_path: string) => ev({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path } })?.status
+    expect(read('C:\\Users\\me\\proj\\src\\App.tsx')).toBe('reading App.tsx')
+    expect(read('C:/Users/me/proj/src/App.tsx')).toBe('reading App.tsx')
+    expect(read('src\\a.ts')).toBe('reading a.ts')
+    expect(ev({ hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { file_path: 'C:\\a\\probe.txt' } })?.summary).toBe('probe.txt')
+    expect(ev({ hook_event_name: 'PermissionRequest', tool_name: 'NotebookEdit', tool_input: { notebook_path: 'C:\\a\\n.ipynb\\' } })?.summary).toBe('n.ipynb')
+  })
+
+  it('signals: the target is the project folder, and a cd moves it with Windows rules', () => {
+    const target = (command: string, cwd = CWD) => ev({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd })?.signals?.[0]?.target
+    expect(target('vercel deploy --prod')).toBe('proj')
+    expect(target('cd api && npm test')).toBe('api')
+    expect(target('cd .. && npm test')).toBe('me')
+    expect(target('cd C:/work/svc && npm test')).toBe('svc')
+    expect(target('cd api && npm test', 'C:/Users/me/proj')).toBe('api')
+    expect(target('cd .. && npm test', 'C:/Users/me/proj')).toBe('me')
+    expect(target('fly deploy -a shop-api')).toBe('shop-api')
+  })
+
+  it('a bare git push finds the branch from a Windows cwd', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'agent-office-win-repo-'))
+    try {
+      mkdirSync(join(repo, '.git'))
+      writeFileSync(join(repo, '.git', 'HEAD'), 'ref: refs/heads/release\n')
+      const sig = ev({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push' }, cwd: repo })?.signals?.[0]
+      expect(sig).toMatchObject({ kind: 'push', branch: 'release', toDefault: false })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 })

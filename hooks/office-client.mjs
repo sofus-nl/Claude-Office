@@ -70,9 +70,12 @@ export function signHeaders(token, method, url, body = '') {
  * 29/100 delivered against a busy event loop), where the old backgrounded
  * curl lived on until the server answered.
  */
-export function send(url, { method = 'GET', body = '', headers = {}, timeoutMs = 1000 } = {}) {
+export async function send(url, { method = 'GET', body = '', headers = {}, timeoutMs = 1000 } = {}) {
+  // node:https only when an AGENT_OFFICE_*_URL asks for it: the hook stays cheap to start
+  const request = url.startsWith('https:') ? (await import('node:https')).request : httpRequest
   return new Promise(resolve => {
     let done = false
+    let timer
     const finish = value => {
       if (done) return
       done = true
@@ -80,16 +83,22 @@ export function send(url, { method = 'GET', body = '', headers = {}, timeoutMs =
       resolve(value)
     }
     const data = Buffer.from(body, 'utf8')
-    const req = httpRequest(url, {
-      method,
-      headers: { ...(data.length ? { 'Content-Type': 'application/json' } : {}), 'Content-Length': data.length, ...headers },
-    }, res => {
-      const chunks = []
-      res.on('data', c => chunks.push(c))
-      res.on('end', () => finish({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }))
-      res.on('error', () => finish(null))
-    })
-    const timer = setTimeout(() => { req.destroy(); finish(null) }, timeoutMs)
+    let req
+    try {
+      req = request(url, {
+        method,
+        headers: { ...(data.length ? { 'Content-Type': 'application/json' } : {}), 'Content-Length': data.length, ...headers },
+      }, res => {
+        const chunks = []
+        res.on('data', c => chunks.push(c))
+        res.on('end', () => finish({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }))
+        res.on('error', () => finish(null))
+      })
+    } catch {
+      // A URL node cannot request (a typo in AGENT_OFFICE_EVENT_URL, say)
+      return finish(null)
+    }
+    timer = setTimeout(() => { req.destroy(); finish(null) }, timeoutMs)
     req.on('error', () => finish(null))
     req.end(data)
   })
