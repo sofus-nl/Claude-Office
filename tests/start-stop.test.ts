@@ -10,7 +10,7 @@ import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_pr
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { listen, loadOffice } from './helpers'
@@ -104,6 +104,15 @@ async function listener(): Promise<{ proc: Proc; port: number }> {
   return { proc, port }
 }
 
+/** A detached node running `<dir>/<rel>`: the command line stop-office recognises as the office's. */
+function officeLike(dir: string, rel: string) {
+  const file = join(dir, rel)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${IDLE}
+`)
+  return run(NODE, [file, MARK], process.env)
+}
+
 /** A process that is certainly not node. */
 function stranger() {
   return WIN ? run('ping.exe', ['-n', '300', '127.0.0.1'], process.env) : run('sleep', ['300'], process.env)
@@ -121,8 +130,8 @@ function runStop(officeDir: string, extra: NodeJS.ProcessEnv = {}, args: string[
 describe('stop-office.mjs', () => {
   it('stops only the processes named in the pid files and leaves clients and look-alikes alone', async () => {
     const dir = tempDir('agent-office-stop-')
-    const server = idleNode()
-    const vite = idleNode()
+    const server = officeLike(dir, 'server/index.js')
+    const vite = officeLike(dir, 'node_modules/vite/bin/vite.js')
     const decoy = idleNode()
     writeFileSync(join(dir, 'chat-ai-watcher.mjs'), `${IDLE}\n`)
     const watcher = run(NODE, [join(dir, 'chat-ai-watcher.mjs')], process.env)
@@ -150,7 +159,9 @@ describe('stop-office.mjs', () => {
 
   it('takes down what the recorded process started too', async () => {
     const dir = tempDir('agent-office-stop-')
-    const parent = run(NODE, ['-e', `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(IDLE)}, ${JSON.stringify(MARK)}], { stdio: 'ignore' }); console.log(c.pid); ${IDLE}`, MARK], process.env)
+    writeFileSync(join(dir, 'vite.js'), `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(IDLE)}, ${JSON.stringify(MARK)}], { stdio: 'ignore' }); console.log(c.pid); ${IDLE}
+`)
+    const parent = run(NODE, [join(dir, 'vite.js'), MARK], process.env)
     const childPid = await waitFor('the grandchild pid', () => Number(parent.out.trim()) || 0)
     expect(alive(childPid)).toBe(true)
     writeFileSync(join(dir, 'vite.pid'), `${parent.pid}\n`)
@@ -172,6 +183,18 @@ describe('stop-office.mjs', () => {
     expect(out).toContain('Nothing was running')
     expect(alive(other.pid)).toBe(true)
     expect(existsSync(join(dir, 'server.pid'))).toBe(false)
+  }, 60_000)
+
+  it('refuses a pid file that points at some other node process (a stale pid reused by an MCP server, say)', async () => {
+    const dir = tempDir('agent-office-stop-')
+    const other = idleNode()
+    writeFileSync(join(dir, 'server.pid'), String(other.pid))
+    writeFileSync(join(dir, 'vite.pid'), String(other.pid))
+
+    const { code, out } = await runStop(dir)
+    expect(code).toBe(0)
+    expect(out).toContain(`pid ${other.pid} is not an office process`)
+    expect(alive(other.pid)).toBe(true)
   }, 60_000)
 
   it('does nothing to a listener on the office port unless --force is given', async () => {

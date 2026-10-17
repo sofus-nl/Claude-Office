@@ -47,8 +47,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 /** The chat watcher's command line (the .sh one of an older install too). */
 export const WATCHER_PATTERN = /chat-(ai-)?watcher\.(sh|mjs)/
-const SERVER_PATTERN = /(^|[\\/ "])node(\.exe)?([ "]|$)|server[\\/]index\.js/
-const VITE_PATTERN = /vite|(^|[\\/ "])node(\.exe)?([ "]|$)|npx|npm/
+// Only what start-office runs (`node server/index.js`, `node …/vite/bin/vite.js`, or
+// the .sh's `npx vite`): a bare "node" would let a stale pid file name any node
+// process, and on Windows its whole tree would be force-killed
+const SERVER_PATTERN = /server[\\/]index\.js/
+const VITE_PATTERN = /vite/
 
 /** execFile without a shell: { err, stdout }, never rejects. */
 const run = (cmd, args) => new Promise(resolve =>
