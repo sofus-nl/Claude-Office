@@ -242,6 +242,7 @@ describe('start() and the token file (C09)', () => {
     await listening
 
     expect(readFileSync(tokenFile, 'utf8')).toBe(office.server.AUTH_TOKEN)
+    // Windows has no POSIX modes: the user-profile ACL keeps the file private there
     if (process.platform !== 'win32') expect(mode(tokenFile)).toBe(0o600)
     await new Promise<void>(res => office.server.wss.close(() => res()))
     await new Promise<void>(res => office.server.httpServer.close(() => res()))

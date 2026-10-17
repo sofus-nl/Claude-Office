@@ -53,7 +53,7 @@ jobs:
 
       - name: Test
         # tests/plugin.test.ts runs `claude plugin validate` again from vitest
-        # now that the CLI is on PATH (it skips with a note when it is not)
+        # on ubuntu, where the CLI is installed (macOS and Windows skip it with a note)
         run: npm test
 
       - name: Build

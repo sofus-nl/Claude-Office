@@ -422,6 +422,15 @@ describe('runDoctor', () => {
       expect(nodeLine((await runDoctor(await base(pluginHome(), { platform: 'win32', loginPath: tmp('doctor-login-path-') }))) as Report)).toBeUndefined()
     })
 
+    it('WARNs on Windows when node.exe is not on PATH: the hooks there always run bare `node`', async () => {
+      const winLine = (r: Report) => r.results.find(l => l.title.includes('node.exe is not on PATH'))
+      expect(winLine((await runDoctor(await base(pluginHome(), { platform: 'win32', path: tmp('doctor-path-') }))) as Report)?.level).toBe(WARN)
+      const withNode = tmp('doctor-path-')
+      writeFileSync(join(withNode, 'node.exe'), '')
+      chmodSync(join(withNode, 'node.exe'), 0o755)
+      expect(winLine((await runDoctor(await base(pluginHome(), { platform: 'win32', path: withNode }))) as Report)).toBeUndefined()
+    })
+
     it('is not raised for an installer-written hook, which carries the absolute node path itself', async () => {
       const r = (await runDoctor(await base(installedHome(), { platform: 'linux', loginPath: tmp('doctor-login-path-') }))) as Report
       expect(nodeLine(r)).toBeUndefined()

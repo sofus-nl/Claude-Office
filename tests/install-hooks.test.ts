@@ -969,20 +969,18 @@ describe('install-hooks.mjs: which node the commands name', () => {
     expect(nodeCommand({ platform: 'linux', loginPath: '', execPath: '/Users/me/.nvm/versions/node/v22/bin/node' })).toBe('"/Users/me/.nvm/versions/node/v22/bin/node"')
   })
 
-  it('Windows: bare `node` when node.exe is on PATH, else the absolute path', () => {
-    expect(nodeCommand({ platform: 'win32', env: { PATH: `C:\\nowhere;${dirWith('node.exe')}` }, execPath })).toBe('node')
-    expect(nodeCommand({ platform: 'win32', env: { Path: dirWith('node.exe') }, execPath })).toBe('node')
-    expect(nodeCommand({ platform: 'win32', env: { PATH: dirWith('node.cmd') }, execPath })).toBe('"C:/Program Files/nodejs/node.exe"')
-    expect(nodeCommand({ platform: 'win32', env: {}, execPath })).toBe('"C:/Program Files/nodejs/node.exe"')
+  it('Windows: always bare `node`, which Git Bash and PowerShell both run (a quoted path needs the PowerShell `&`, a background job in bash)', () => {
+    expect(nodeCommand({ platform: 'win32', loginPath: dirWith('node.exe'), execPath })).toBe('node')
+    expect(nodeCommand({ platform: 'win32', loginPath: '', execPath })).toBe('node')
   })
 
-  it.skipIf(process.platform !== 'win32')('Windows: with node.exe off the PATH the installer writes the absolute path of the node that ran it', () => {
+  it.skipIf(process.platform !== 'win32')('Windows: with node.exe off the PATH the installer still writes `node` (npm run doctor flags it)', () => {
     const home = freshHome()
     const res = runRaw(home, [], { PATH: dirWith(), Path: dirWith() })
     expect(res.status).toBe(0)
     const settings = readSettings(home)
-    expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe(`"${fwd(process.execPath)}" "${fwd(TRACKER_SCRIPT)}"`)
-    expect(settings.statusLine.command).toBe(`"${fwd(process.execPath)}" "${fwd(TRACKER_SCRIPT.replace(/agent-tracker\.mjs$/, 'status-line.mjs'))}"`)
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe(`node "${fwd(TRACKER_SCRIPT)}"`)
+    expect(settings.statusLine.command).toBe(`node "${fwd(TRACKER_SCRIPT.replace(/agent-tracker\.mjs$/, 'status-line.mjs'))}"`)
   })
 })
 

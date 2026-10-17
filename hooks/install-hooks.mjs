@@ -180,14 +180,13 @@ export function which(name, path = process.env.PATH ?? '') {
 
 /**
  * The command that starts node in a hook: `node` when a non-login shell finds
- * it (POSIX: LOGIN_PATH; Windows: node.exe on PATH), else the absolute path of
- * the running node, quoted, forward slashes.
+ * it (LOGIN_PATH), else the absolute path of the running node, quoted, forward
+ * slashes. Always `node` on Windows: PowerShell runs a quoted path only after
+ * `&`, which Git Bash reads as "background", so no quoted form works in both.
  */
-export function nodeCommand({ platform = process.platform, env = process.env, execPath = process.execPath, loginPath = LOGIN_PATH } = {}) {
-  const onPath = platform === 'win32'
-    ? (env.PATH ?? env.Path ?? '').split(';').some(dir => dir && existsSync(join(dir.replace(/^"|"$/g, ''), 'node.exe')))
-    : which('node', loginPath) !== null
-  return onPath ? 'node' : `"${forwardSlashes(execPath)}"`
+export function nodeCommand({ platform = process.platform, execPath = process.execPath, loginPath = LOGIN_PATH } = {}) {
+  if (platform === 'win32' || which('node', loginPath) !== null) return 'node'
+  return `"${forwardSlashes(execPath)}"`
 }
 
 /** ~ (also ~/ and ~\) as a shell would expand it in a hook command */

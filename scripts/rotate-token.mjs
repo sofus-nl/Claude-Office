@@ -11,7 +11,7 @@
  *
  * A running server keeps the token it started with in memory, while the hook
  * and the scripts read the file — so while the office answers on its port
- * this refuses (stop it first: scripts/stop-office.sh, Ctrl+C, or quit the
+ * this refuses (stop it first: scripts/stop-office.mjs, Ctrl+C, or quit the
  * desktop app). --force deletes the file anyway; then restart the office at
  * once, since until it is restarted every hook event is refused.
  */
@@ -39,7 +39,7 @@ export async function rotateToken({ env = process.env, force = false, out = proc
   const port = readPort(env, { warn: m => err.write(`${m}\n`) })
   const running = await serverAnswers(port)
   if (running && !force) {
-    err.write(`The office is running on port ${port} with the current token. Stop it first (bash scripts/stop-office.sh, Ctrl+C, or quit the desktop app), then run npm run rotate-token again.\n`)
+    err.write(`The office is running on port ${port} with the current token. Stop it first (node scripts/stop-office.mjs, Ctrl+C, or quit the desktop app), then run npm run rotate-token again.\n`)
     return 1
   }
   rmSync(tokenFile, { force: true })

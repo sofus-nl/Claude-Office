@@ -16,6 +16,18 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { listen, loadOffice, postAuthed, removeOffice, spawnAgent, type Office } from './helpers'
 
 const WATCHER = fileURLToPath(new URL('../scripts/chat-ai-watcher.mjs', import.meta.url))
+const STOP = fileURLToPath(new URL('../scripts/stop-office.mjs', import.meta.url))
+
+/** The real stop script against an office dir: { code, out }. */
+function runStop(officeDir: string) {
+  return new Promise<{ code: number | null; out: string }>(resolve => {
+    const child = spawn(process.execPath, [STOP], { env: { ...process.env, HOME: officeDir, USERPROFILE: officeDir, AGENT_OFFICE_HOME: officeDir }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    let out = ''
+    child.stdout.setEncoding('utf8').on('data', d => { out += d })
+    child.stderr.setEncoding('utf8').on('data', d => { out += d })
+    child.on('close', code => resolve({ code, out }))
+  })
+}
 const WIN = process.platform === 'win32'
 
 // Fake `claude`: logs every call (one JSON object per line: argv and stdin)
@@ -347,7 +359,7 @@ describe('chat-ai-watcher.mjs: a chat-ai-last-ts that is not a timestamp', () =>
 })
 
 describe('chat-ai-watcher.mjs stopped mid-reply', () => {
-  it('stopping the watcher (stop-office: tree kill / group kill) takes the in-flight `claude -p` and its children down', async () => {
+  it('stop-office.mjs takes the in-flight `claude -p` and its children down with the watcher (tree kill / group kill)', async () => {
     const w = await startWatcher({ delay: 30 })
     try {
       await say(w, 'there is a bug in checkout')
@@ -356,7 +368,9 @@ describe('chat-ai-watcher.mjs stopped mid-reply', () => {
       const [think] = fakePids(w, 'sleep')
       expect(alive(claude)).toBe(true)
 
-      await w.watcher.stop()
+      const { code, out } = await runStop(w.office.dir)
+      expect(code).toBe(0)
+      expect(out).toContain(`Chat watcher stopped (pid ${w.watcher.pid})`)
       await waitFor('the in-flight claude -p to be gone', () => !alive(claude) && !alive(think), 5000)
       expect(existsSync(join(w.office.dir, 'chat-ai-claude.err'))).toBe(false)
     } finally {

@@ -189,7 +189,13 @@ function runClaude(aPrompt) {
     let err = ''
     let done = false
     // No shell: the argv is fixed and the chat text only ever travels on stdin
-    const child = spawn(claude.cmd, [...claude.args, ...CLAUDE_ARGS], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    let child
+    try {
+      child = spawn(claude.cmd, [...claude.args, ...CLAUDE_ARGS], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    } catch (e) {
+      // A CHAT_AI_CLAUDE naming a .cmd throws EINVAL here, synchronously
+      return resolve({ out: '', err: e.message })
+    }
     running = child
     const timer = setTimeout(() => killClaude(child), CLAUDE_TIMEOUT_MS)
     const finish = () => {
@@ -199,8 +205,9 @@ function runClaude(aPrompt) {
       running = null
       resolve({ out, err })
     }
-    child.stdout.on('data', d => { out += d })
-    child.stderr.on('data', d => { err += d })
+    // Decoded as one stream, so a character split across two chunks stays whole
+    child.stdout.setEncoding('utf8').on('data', d => { out += d })
+    child.stderr.setEncoding('utf8').on('data', d => { err += d })
     child.stdin.on('error', () => {})
     child.on('error', e => { err += e.message; finish() })
     child.on('close', finish)

@@ -495,6 +495,7 @@ describe('the answerPermissions setting and its marker file', () => {
     const marker = join(office.dir, 'answer-permissions')
     expect(office.server.ANSWER_MARKER_FILE).toBe(marker)
     expect(existsSync(marker)).toBe(true)
+    // Windows has no POSIX modes: the user-profile ACL keeps the file private there
     if (process.platform !== 'win32') expect(statSync(marker).mode & 0o777).toBe(0o600)
     expect((await request(office.server.app).get('/settings')).body).toMatchObject({ answerPermissions: true, logPrompts: 'summary' })
 

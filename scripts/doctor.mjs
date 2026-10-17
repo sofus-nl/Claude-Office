@@ -214,7 +214,7 @@ function safeReaddir(dir) {
 }
 
 /** The hook lines: settings.json hooks and/or the plugin. */
-export function checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform = process.platform, loginPath = LOGIN_PATH }) {
+export function checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform = process.platform, loginPath = LOGIN_PATH, path = process.env.PATH ?? '' }) {
   const out = []
   const hooks = inspectHooks(settings, { events, tracker, home })
   const plugin = inspectPlugin(settings, configDir)
@@ -268,6 +268,12 @@ export function checkHooks({ settingsPath, settings, settingsState, events, trac
     ]
     const what = settingsState?.missing ? `${settingsPath} does not exist` : `nothing in ${settingsPath} runs hooks/${TRACKER_NAME}`
     out.push(result(FAIL, `hooks: not installed — ${what}, and no agent-office plugin is enabled`, ...notes))
+  }
+
+  // On Windows every office hook runs bare `node` (install-hooks nodeCommand): it has to be on the PATH Claude Code inherits
+  if (platform === 'win32' && (hooks.any || plugin.found) && !which('node.exe', path)) {
+    out.push(result(WARN, 'hooks: they run `node`, but node.exe is not on PATH — Claude Code reports a hook error on every event',
+      `add the folder of ${process.execPath} to your user PATH, then restart Claude Code`))
   }
 
   return { results: out, hooks, plugin }
@@ -375,7 +381,7 @@ export function checkDist({ root, port = DEFAULT_PORT }) {
 
 /**
  * Run every check. Options override the environment (tests): home, configDir,
- * officeHome, port, root, platform, loginPath, fetchImpl, nodeVersion.
+ * officeHome, port, root, platform, loginPath, path, fetchImpl, nodeVersion.
  */
 export async function runDoctor(opts = {}) {
   const env = opts.env ?? process.env
@@ -404,7 +410,7 @@ export async function runDoctor(opts = {}) {
 
   const results = []
   results.push(checkNode(opts.nodeVersion))
-  const hooks = checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform, loginPath: opts.loginPath })
+  const hooks = checkHooks({ settingsPath, settings, settingsState, events, tracker, home, configDir, fallback, platform, loginPath: opts.loginPath, path: opts.path })
   results.push(...hooks.results)
   results.push(checkStatusLine({ settings, statusScript, home, pluginOnly: hooks.plugin.found && !hooks.hooks.any }))
   const server = await checkServer({ port, fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs })

@@ -363,6 +363,7 @@ describe('the token file: reused when it is safe to trust, replaced otherwise', 
     expect(existsSync(tokenFile)).toBe(false)
     const lines = await started(office)
     expect(readFileSync(tokenFile, 'utf8')).toBe(office.server.AUTH_TOKEN)
+    // Windows has no POSIX modes: the user-profile ACL keeps the file private there
     if (process.platform !== 'win32') expect(mode(tokenFile)).toBe(0o600)
     expect(lines.join('\n')).toContain(`Auth token written to: ${tokenFile}`)
   })
@@ -379,6 +380,7 @@ describe('the token file: reused when it is safe to trust, replaced otherwise', 
       expect(office.server.AUTH_TOKEN).not.toBe(content)
       await started(office)
       expect(readFileSync(tokenFile, 'utf8')).toBe(office.server.AUTH_TOKEN)
+      // Windows has no POSIX modes: the user-profile ACL keeps the file private there
       if (process.platform !== 'win32') expect(mode(tokenFile)).toBe(0o600)
     })
   }

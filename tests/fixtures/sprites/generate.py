@@ -1,7 +1,11 @@
 """
 Regenerates the sprite-tools fixtures: the input PNGs here, and expected/ by
 running the ORIGINAL Pillow scripts (scripts/split-character.py and
-scripts/extract-boss-sprite.py) on them.
+scripts/extract-boss-sprite.py) on them. Those were replaced by the .mjs
+ports; restore them for a run with
+    git show 1a9ba71:scripts/split-character.py > scripts/split-character.py
+    git show 1a9ba71:scripts/extract-boss-sprite.py > scripts/extract-boss-sprite.py
+and delete them again afterwards.
 
     python tests/fixtures/sprites/generate.py       (needs Pillow 11.x)
 
