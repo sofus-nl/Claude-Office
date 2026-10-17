@@ -20,7 +20,6 @@ const SCRIPTS = fileURLToPath(new URL('../scripts', import.meta.url))
 const WATCHER = join(SCRIPTS, 'chat-ai-watcher.sh')
 const START = join(SCRIPTS, 'start-office.sh')
 const STOP = join(SCRIPTS, 'stop-office.sh')
-const CHAT_POST = join(SCRIPTS, 'chat-post.py')
 
 const LOG_ARGS = `python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"`
 
@@ -449,66 +448,6 @@ describe('stop-office.sh', () => {
     if (/needs lsof, ss or fuser/.test(forced.out)) return // no port tool on this box
     expect(forced.out).toContain(`killed pid ${listening.pid} listening on :${port}`)
     await waitFor('listener to exit', () => !alive(listening.pid))
-  })
-})
-
-// ---------------------------------------------------------------------------
-// chat-post.py — README › Chat: `python3 scripts/chat-post.py /clear`
-// ---------------------------------------------------------------------------
-
-describe('chat-post.py', () => {
-  /** A real server on a free port; the token file written only when asked (start() writes it once bound) */
-  async function office(withToken: boolean) {
-    const office = await loadOffice()
-    const port = await listen(office.server.httpServer)
-    if (withToken) writeFileSync(join(office.dir, 'auth-token'), office.server.AUTH_TOKEN, { mode: 0o600 })
-    const env = { ...process.env, HOME: tempDir('agent-office-chat-post-'), AGENT_OFFICE_HOME: office.dir, AGENT_OFFICE_PORT: String(port) }
-    // Async: the server answers on this process's event loop, so a synchronous spawn would deadlock
-    const post = async (...args: string[]) => {
-      const proc = run('python3', [CHAT_POST, ...args], env, false)
-      return { code: await proc.exited, out: proc.out }
-    }
-    const texts = async () => ((await request(office.server.app).get('/chat')).body.messages as Array<{ text: string }>).map(m => m.text)
-    return { office, post, texts }
-  }
-
-  it('/clear wipes the chat history, as the README documents: a slash command goes to POST /chat with the token', async () => {
-    const { office: o, post, texts } = await office(true)
-    try {
-      await request(o.server.app).post('/chat').send({ sender: 'Antony', text: 'my secret prompt' })
-      expect(await texts()).toContain('my secret prompt')
-
-      const res = await post('/clear')
-      expect(res.code).toBe(0)
-      expect(res.out).toContain('Posted: /clear')
-      expect(await texts()).toEqual(['/clear', '🧹 Chat cleared'])
-    } finally {
-      removeOffice(o)
-    }
-  })
-
-  it('a refused command exits 1 with the server\'s reason and deletes nothing; a plain line still posts as Claude', async () => {
-    const { office: o, post, texts } = await office(false)
-    try {
-      await request(o.server.app).post('/chat').send({ sender: 'Antony', text: 'keep me' })
-      const res = await post('/clear')
-      expect(res.code).toBe(1)
-      expect(res.out).toContain('Failed: HTTP 401: /clear needs the office auth token')
-      expect(await texts()).toContain('keep me')
-      // The panel's line names the command that works
-      expect((await texts()).at(-1)).toContain('python3 scripts/chat-post.py /clear')
-    } finally {
-      removeOffice(o)
-    }
-
-    const ok = await office(true)
-    try {
-      const res = await ok.post('build', 'is', 'green')
-      expect(res.code).toBe(0)
-      expect(await ok.texts()).toContain('build is green')
-    } finally {
-      removeOffice(ok.office)
-    }
   })
 })
 

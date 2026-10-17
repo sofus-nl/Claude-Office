@@ -1974,7 +1974,7 @@ app.post('/chat', (req, res) => {
     if (PRIVILEGED_COMMANDS.has(cmd) && !tokenMatches(bearerToken(req))) {
       // Tell the person in the chat panel why nothing happened (the UI ignores
       // the HTTP status), and the caller through the status
-      const sysMsg = addMessage({ sender: 'system', text: `🔒 ${cmd} needs the office auth token — run python3 scripts/chat-post.py ${cmd} from the office checkout, which sends it (see README › Chat)`, isSystem: true })
+      const sysMsg = addMessage({ sender: 'system', text: `🔒 ${cmd} needs the office auth token — run node scripts/chat-post.mjs ${cmd} from the office checkout, which sends it (see README › Chat)`, isSystem: true })
       broadcast({ type: 'chat_message', ...sysMsg, isSystem: true })
       console.warn(`[chat] Refused ${cmd} from ${clampString(sender)}: no auth token`)
       return unauthorized(res, { error: `${cmd} needs the office auth token` })
