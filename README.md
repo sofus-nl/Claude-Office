@@ -221,7 +221,7 @@ Here's Mini Claude — I asked Claude to describe itself after showing it the of
 4. Save the output and extract the sprites:
 
 ```bash
-python3 scripts/extract-boss-sprite.py your-character.png MyChar-1
+node scripts/extract-boss-sprite.mjs your-character.png MyChar-1
 ```
 
 ## Chat

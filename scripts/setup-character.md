@@ -27,10 +27,10 @@ Save the sprite sheet as a single image (e.g., `my-character.png`).
 
 ## Step 3: Split Into 4 Direction Images
 
-Run the Python script to automatically split the sheet into 4 separate images:
+Run the script to automatically split the sheet into 4 separate images (Node only, no Python or Pillow):
 
 ```bash
-python3 scripts/split-character.py my-character.png "YourName"
+node scripts/split-character.mjs my-character.png "YourName"
 ```
 
 This creates:
