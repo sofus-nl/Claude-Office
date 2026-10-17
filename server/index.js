@@ -20,7 +20,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
-import { readFileSync, existsSync, writeFileSync, mkdirSync, realpathSync, chmodSync, unlinkSync, openSync, fstatSync, closeSync, constants as fsConstants } from 'fs'
+import { readFileSync, existsSync, writeFileSync, mkdirSync, realpathSync, chmodSync, unlinkSync, openSync, fstatSync, lstatSync, closeSync, constants as fsConstants } from 'fs'
 import { homedir } from 'os'
 import { join, basename } from 'path'
 import { randomBytes, timingSafeEqual, createHmac } from 'crypto'
@@ -124,6 +124,8 @@ const TOKEN_PATTERN = /^[0-9a-f]{64}$/
 function readTokenFile(file = TOKEN_FILE) {
   let fd
   try {
+    // Windows has no O_NOFOLLOW: refuse a symlink before opening instead
+    if (fsConstants.O_NOFOLLOW === undefined && lstatSync(file).isSymbolicLink()) return null
     fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
     const st = fstatSync(fd)
     if (!st.isFile()) return null
