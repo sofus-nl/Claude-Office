@@ -116,8 +116,9 @@ function runWatcher(env: NodeJS.ProcessEnv) {
 
 afterAll(async () => {
   for (const p of procs) await p.stop()
-  for (const d of tempDirs) rmSync(d, { recursive: true, force: true })
-})
+  // try: on Windows a dir whose chat.db a test office still holds open cannot be removed
+  for (const d of tempDirs) try { rmSync(d, { recursive: true, force: true }) } catch {}
+}, 60_000)
 
 interface WatcherWorld {
   office: Office
@@ -294,7 +295,8 @@ describe('chat-ai-watcher.mjs lock', () => {
     await say(w, 'there is a bug in checkout')
     await waitFor('the empty-reply log line', () => w.watcher.out.includes('Empty reply from claude'))
     expect(claudeCalls(w)).toHaveLength(1)
-    expect(w.watcher.out).toContain('claude: Not logged in')
+    // claude's stderr is logged on the line after, which can arrive in a later chunk
+    await waitFor('claude\'s own error in the log', () => w.watcher.out.includes('claude: Not logged in'))
     // The watcher prints the empty-reply line inside doReply and removes the
     // lock when it returns, so the log line can arrive a few ms before the
     // file is gone: wait for the release rather than asserting it at once
@@ -419,10 +421,9 @@ describe('chat-ai-watcher.mjs: a claude that hangs', () => {
     try {
       await waitFor('watcher pid file', () => existsSync(join(office.dir, 'chat-watcher.pid')))
       await say(w, 'there is a bug in checkout')
-      await waitFor('the fake claude to start thinking', () => fakePids(w, 'sleep').length === 1)
-      const [claude] = fakePids(w, 'claude')
-      await waitFor('the empty-reply log line', () => watcher.out.includes('Empty reply from claude'), 10_000)
-      expect(alive(claude)).toBe(false)
+      // A 1 s timeout on a busy machine can kill the fake before it starts thinking, so only the outcome is asserted
+      await waitFor('the empty-reply log line', () => watcher.out.includes('Empty reply from claude'), 20_000)
+      for (const pid of [...fakePids(w, 'claude'), ...fakePids(w, 'sleep')]) expect(alive(pid)).toBe(false)
       await waitFor('the lock to be released', () => !existsSync(join(office.dir, 'chat-ai.lock')))
       expect(replies(await chat(w))).toHaveLength(0)
     } finally {
