@@ -48,7 +48,7 @@
     "@types/react-dom": "^18.3.0",
     "@types/ws": "^8.5.12",
     "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^33.0.0",
+    "electron": "^42.11.16",
     "electron-builder": "^24.13.3",
     "supertest": "^7.3.1",
     "typescript": "^5.5.3",
